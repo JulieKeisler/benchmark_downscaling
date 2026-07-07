@@ -1,0 +1,9 @@
+# downloaded data and experiment outputs
+data/raw/
+results/
+
+# python
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/

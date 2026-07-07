@@ -1,0 +1,32 @@
+# Benchmark evaluation configuration.
+# Edit paths to match where data lives on your machine.
+# Run: python scripts/evaluate.py [--config configs/benchmark.yaml]
+
+# Evaluation period: intersection of ERA5 (1979–2021) and IPSL historical (1960–2014).
+period:
+  start: 1979
+  end: 2014
+
+# Common variables (ERA5 ∩ IPSL-CM6A-LR).
+# rsds excluded: ERA5 rsds still downloading.
+# ps excluded: not in IPSL ESGF output.
+variables:
+  - tas
+  - psl
+  - pr
+  - sfcWind
+  - sfcWindmax
+
+
+
+era5:
+  # Path to directory containing {variable}_{year}.nc files.
+  dir: /scratch/jkeisler/era5/
+
+models:
+  ipsl_cm6a_lr:
+    # Path to directory containing {variable}_historical_1960-2014.nc
+    dir: /scratch/jkeisler/cmip6/ipsl_cm6a_lr/
+
+# Outputs: metrics.json + plots/{variable}/*.png
+output_dir: /scratch/jkeisler/benchmark_results/
