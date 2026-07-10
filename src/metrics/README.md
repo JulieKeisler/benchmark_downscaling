@@ -122,7 +122,7 @@ Spatial mean of the Pearson correlation between GCM and prediction over time,
 computed at each grid point independently:
 
 $$
-R_{\mathrm{daily}} = \frac{1}{N} \sum_{i=1}^{N} r\!\left( x_{:,i},\ \hat{y}_{:,i} \right)
+R_{\mathrm{daily}} = \frac{1}{N} \sum_{i=1}^{N} r\left( x_{:,i},\ \hat{y}_{:,i} \right)
 $$
 
 where $r(\cdot, \cdot)$ is Pearson's $r$ over the time axis. For free-running GCMs (not
@@ -137,7 +137,7 @@ that collapses to monthly climatology).
 Same as above but computed on annual-mean fields:
 
 $$
-R_{\mathrm{annual}} = \frac{1}{N} \sum_{i=1}^{N} r\!\left( \bar{x}^{\mathrm{yr}}_{:,i},\ \bar{\hat{y}}^{\mathrm{yr}}_{:,i} \right)
+R_{\mathrm{annual}} = \frac{1}{N} \sum_{i=1}^{N} r\left( \bar{x}^{\mathrm{yr}}_{:,i},\ \bar{\hat{y}}^{\mathrm{yr}}_{:,i} \right)
 $$
 
 where $\bar{x}^{\mathrm{yr}}$ denotes annual mean. More informative than daily correlation for
@@ -195,11 +195,11 @@ the GCM trend would score badly here.
 MAE of the pointwise temporal Pearson correlation between two variables:
 
 $$
-C_y(i) = r\!\left( y^{(a)}_{:,i},\ y^{(b)}_{:,i} \right) \qquad \text{(ERA5 pair)}
+C_y(i) = r\left( y^{(a)}_{:,i},\ y^{(b)}_{:,i} \right) \qquad \text{(ERA5 pair)}
 $$
 
 $$
-C_{\hat{y}}(i) = r\!\left( \hat{y}^{(a)}_{:,i},\ \hat{y}^{(b)}_{:,i} \right) \qquad \text{(prediction pair)}
+C_{\hat{y}}(i) = r\left( \hat{y}^{(a)}_{:,i},\ \hat{y}^{(b)}_{:,i} \right) \qquad \text{(prediction pair)}
 $$
 
 $$

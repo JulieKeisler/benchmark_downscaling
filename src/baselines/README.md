@@ -14,7 +14,7 @@ Cubic spline interpolation of the GCM field to the ERA5 grid, independently
 at each timestep:
 
 $$
-\hat{y}_t = \mathcal{I}\!\left( x_t,\ \mathrm{lat}_{\mathrm{ERA5}},\ \mathrm{lon}_{\mathrm{ERA5}} \right)
+\hat{y}_t = \mathcal{I}\left( x_t,\ \mathrm{lat}_{\mathrm{ERA5}},\ \mathrm{lon}_{\mathrm{ERA5}} \right)
 $$
 
 where $\mathcal{I}$ denotes bicubic interpolation.
@@ -54,7 +54,7 @@ Scale daily GCM values by the monthly correction factor. For precipitation
 (multiplicative):
 
 $$
-\hat{y}_{\mathrm{daily}} = x_{\mathrm{daily}} \times \mathrm{clip}\!\left(\frac{\mathrm{bc}_{\mathrm{mon}}}{x_{\mathrm{mon}}},\ 0,\ 10\right)
+\hat{y}_{\mathrm{daily}} = x_{\mathrm{daily}} \times \mathrm{clip}\left(\frac{\mathrm{bc}_{\mathrm{mon}}}{x_{\mathrm{mon}}},\ 0,\ 10\right)
 $$
 
 For other variables (additive):
@@ -70,7 +70,7 @@ detail from the calibration climatology.
 For precipitation (multiplicative):
 
 $$
-\hat{y}_{\mathrm{fine}} \leftarrow \hat{y}_{\mathrm{fine}} \times \mathrm{clip}\!\left(\frac{C_{\mathrm{fine}}}{C_{\mathrm{c \to fine}}},\ 0.1,\ 10\right)
+\hat{y}_{\mathrm{fine}} \leftarrow \hat{y}_{\mathrm{fine}} \times \mathrm{clip}\left(\frac{C_{\mathrm{fine}}}{C_{\mathrm{c \to fine}}},\ 0.1,\ 10\right)
 $$
 
 For other variables (additive):
@@ -97,7 +97,7 @@ observed spatial detail from the calibration period.
 For each grid cell and calendar month, CDF-t applies the mapping:
 
 $$
-F_{R_f}(x) = F_{R_p}\!\left( F_{G_p}^{-1}\!\left( F_{G_f}(x) \right) \right)
+F_{R_f}(x) = F_{R_p}\left( F_{G_p}^{-1}\left( F_{G_f}(x) \right) \right)
 $$
 
 where:
@@ -157,7 +157,7 @@ per-month KS statistic:
 Pairs are constructed from ERA5 alone by subsampling (stride 4) and regridding:
 
 $$
-x_t = \mathcal{I}\!\left( \mathrm{ERA5}_t[::4,\ ::4],\ \mathrm{lat},\ \mathrm{lon} \right) \qquad \text{(coarsened input)}
+x_t = \mathcal{I}\left( \mathrm{ERA5}_t[::4,\ ::4],\ \mathrm{lat},\ \mathrm{lon} \right) \qquad \text{(coarsened input)}
 $$
 
 $$
@@ -167,7 +167,7 @@ $$
 A plain U-Net (no attention, no time conditioning) is trained with MSE loss:
 
 $$
-\mathcal{L} = \mathbb{E}\!\left[\left\| f_\theta\!\left( \phi(x_t),\ m_t \right) - \phi(y_t) \right\|^2\right]
+\mathcal{L} = \mathbb{E}\left[\left\| f_\theta\left( \phi(x_t),\ m_t \right) - \phi(y_t) \right\|^2\right]
 $$
 
 where $\phi$ denotes the normalisation encoding and $m_t$ is the month embedding.
@@ -179,11 +179,11 @@ GCM fields are first bias-corrected at coarse (4×-subsampled ERA5) resolution
 using CDF-t, then bicubic-upsampled to the ERA5 grid, then fed to the U-Net:
 
 $$
-\tilde{x}_t = \mathrm{CDFt}\!\left( \mathrm{GCM}_t \to \mathrm{ERA5},\ \text{coarse grid} \right)
+\tilde{x}_t = \mathrm{CDFt}\left( \mathrm{GCM}_t \to \mathrm{ERA5},\ \text{coarse grid} \right)
 $$
 
 $$
-\hat{y}_t = \phi^{-1}\!\left( f_\theta\!\left( \phi\!\left( \mathcal{I}(\tilde{x}_t) \right),\ m_t \right) \right)
+\hat{y}_t = \phi^{-1}\left( f_\theta\left( \phi\left( \mathcal{I}(\tilde{x}_t) \right),\ m_t \right) \right)
 $$
 
 The CDF-t step at coarse resolution removes the GCM mean bias before the
@@ -208,7 +208,7 @@ and a domain-specific fine-scale component (residual). The low-pass filter is
 a 2D Fourier circular mask with cutoff radius $r_c = 1$ pixel in frequency space:
 
 $$
-x_{\mathrm{lp}} = \mathcal{F}^{-1}\!\left( \mathcal{F}(x) \cdot \mathbb{1}\!\left[\sqrt{f_x^2 + f_y^2} \leq r_c\right] \right)
+x_{\mathrm{lp}} = \mathcal{F}^{-1}\left( \mathcal{F}(x) \cdot \mathbb{1}\left[\sqrt{f_x^2 + f_y^2} \leq r_c\right] \right)
 $$
 
 With $r_c = 1$, only the DC component and first-order harmonics are retained —
@@ -225,7 +225,7 @@ The flow model $v_\theta$ learns the conditional velocity field via linear flow
 matching with an **EDM-skewed time schedule** (Karras et al. 2022):
 
 $$
-\sigma = \exp\!\left( \mathcal{N}(\mu_P,\ \sigma_P^2) \right), \quad \mu_P = -1.2, \quad \sigma_P = 1.2
+\sigma = \exp\left( \mathcal{N}(\mu_P,\ \sigma_P^2) \right), \quad \mu_P = -1.2, \quad \sigma_P = 1.2
 $$
 
 $$
@@ -243,7 +243,7 @@ x_t = (1-t)\,x_0 + t\,x_1
 $$
 
 $$
-\mathcal{L} = \mathbb{E}\!\left[\left\| v_\theta( x_t,\ m_t,\ t ) - (x_1 - x_0) \right\|^2\right]
+\mathcal{L} = \mathbb{E}\left[\left\| v_\theta( x_t,\ m_t,\ t ) - (x_1 - x_0) \right\|^2\right]
 $$
 
 ### Inference
@@ -252,11 +252,11 @@ Starting from the bicubic-regridded GCM after spectral low-pass ( $r_c = 1$ )
 plus HF noise:
 
 $$
-x_0 = \phi\!\left( \mathcal{F}_{\mathrm{lp}}( \mathrm{GCM} ) \right) + \varepsilon, \quad \varepsilon \sim \mathcal{N}(0,\ \sigma_{\mathrm{HF}}^2 \cdot I)
+x_0 = \phi\left( \mathcal{F}_{\mathrm{lp}}( \mathrm{GCM} ) \right) + \varepsilon, \quad \varepsilon \sim \mathcal{N}(0,\ \sigma_{\mathrm{HF}}^2 \cdot I)
 $$
 
 $$
-\hat{y} = \mathrm{ODESolve}\!\left( \frac{dx}{dt} = v_\theta(x,\ m,\ t),\quad x(0)=x_0,\quad t: 0 \to 1 \right)
+\hat{y} = \mathrm{ODESolve}\left( \frac{dx}{dt} = v_\theta(x,\ m,\ t),\quad x(0)=x_0,\quad t: 0 \to 1 \right)
 $$
 
 ODE integration uses `dopri5` (Dormand–Prince adaptive RK45) via `torchdiffeq`
@@ -284,7 +284,7 @@ Time is discretised into $N$ bins (curriculum: $N$ increases from $N_{\min} = 10
 to $N_{\max} = 150$ over training). The loss is:
 
 $$
-\mathcal{L} = \mathbb{E}\!\left[\left\| f_\theta(x_{t_n},\ t_n) - f_{\bar{\theta}}(x_{t_{n+1}},\ t_{n+1}) \right\|^2\right]
+\mathcal{L} = \mathbb{E}\left[\left\| f_\theta(x_{t_n},\ t_n) - f_{\bar{\theta}}(x_{t_{n+1}},\ t_{n+1}) \right\|^2\right]
 $$
 
 where $t_n < t_{n+1}$ are adjacent bin boundaries sampled by the EDM schedule
@@ -310,7 +310,7 @@ where $c_s$ is the skip coefficient and $c_o$ is the output coefficient.
 The EMA decay is adapted to the current curriculum width:
 
 $$
-\mu = \exp\!\left( \frac{N_{\min} \cdot \ln(\mu_0)}{N} \right), \qquad \mu_0 = 0.9
+\mu = \exp\left( \frac{N_{\min} \cdot \ln(\mu_0)}{N} \right), \qquad \mu_0 = 0.9
 $$
 
 ### Inference — stroke guidance
@@ -319,7 +319,7 @@ At inference time, the GCM is used as a conditioning anchor. The bicubic-regridd
 GCM is encoded and perturbed at noise level $t^\ast = 0.5$ :
 
 $$
-x^\ast = \phi\!\left( \mathcal{I}( \mathrm{GCM}_t ) \right) + \varepsilon \cdot t^\ast, \qquad \varepsilon \sim \mathcal{N}(0, I)
+x^\ast = \phi\left( \mathcal{I}( \mathrm{GCM}_t ) \right) + \varepsilon \cdot t^\ast, \qquad \varepsilon \sim \mathcal{N}(0, I)
 $$
 
 $$
@@ -373,11 +373,11 @@ $$
 **Log variables** (`pr` only — log-transform before min-max to compress heavy tail):
 
 $$
-\phi(x) = \mathrm{minmax}\!\left( \ln(\max(x, 0) + \epsilon) - \ln(\epsilon) \right)
+\phi(x) = \mathrm{minmax}\left( \ln(\max(x, 0) + \epsilon) - \ln(\epsilon) \right)
 $$
 
 $$
-\phi^{-1}(z) = \exp\!\left( \mathrm{minmax}^{-1}(z) + \ln(\epsilon) \right) - \epsilon, \qquad \epsilon = 10^{-6}
+\phi^{-1}(z) = \exp\left( \mathrm{minmax}^{-1}(z) + \ln(\epsilon) \right) - \epsilon, \qquad \epsilon = 10^{-6}
 $$
 
 Statistics ( $x_{\min}$ , $x_{\max}$ ) are computed in the transformed space over the
