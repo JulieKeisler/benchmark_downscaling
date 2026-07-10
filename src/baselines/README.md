@@ -408,23 +408,24 @@ channel (simpler than sinusoidal embedding; unified across modes).
 
 ## Bibliography
 
-- **Wood et al. (2002).** *Hydrologic implications of dynamical and statistical approaches to downscaling climate model outputs.* Climatic Change, 62(1–3), 189–216.
+- **Wood et al. (2004).** *Hydrologic implications of dynamical and statistical approaches to downscaling climate model outputs.* Climatic Change, 62(1–3), 189–216.
   → Foundation of BCSD: monthly quantile mapping at GCM resolution + spatial disaggregation.
 
-- **Michelangeli et al. (2009).** *Probabilistic downscaling approaches: Application to wind cumulative distribution functions.* Geophysical Research Letters, 36(11).
+- **Michelangeli et al. (2009).** *Probabilistic downscaling approaches: Application to wind cumulative distribution functions.* Geophysical Research Letters, 36(11), L11708.
   → CDF-t method: accounting for distribution shift between calibration and projection periods.
 
 - **CERFACS (2025).** *iDownscale: EGU26 short course on ML-based downscaling.* [github.com/cerfacs-globc/idownscale](https://github.com/cerfacs-globc/idownscale/tree/master/docs/egu26_short_course).
   → iDownscale: perfect-prognosis U-Net regression with coarse CDF-t pre-correction.
 
 - **Song et al. (2023).** *Consistency Models.* arXiv:2303.01469.
-  → Consistency distillation framework: self-consistency property, curriculum $N$ , EMA teacher, skip parameterisation.
+  → Consistency distillation framework: self-consistency property, curriculum $N$, EMA teacher, skip parameterisation.
 
-- **Karras et al. (2022).** *Elucidating the Design Space of Diffusion-Based Generative Models (EDM).* NeurIPS 2022.
-  → EDM time schedule ( $P_{\mathrm{mean}} = -1.2$ , $P_{\mathrm{std}} = 1.2$ ), skip/output parameterisation, $\sigma_d = 0.5$ .
+- **Karras et al. (2022).** *Elucidating the Design Space of Diffusion-Based Generative Models (EDM).* Advances in Neural Information Processing Systems (NeurIPS), 35.
+  → EDM design framework: noise schedule ($P_{\mathrm{mean}}=-1.2$, $P_{\mathrm{std}}=1.2$), skip/output parameterisation, $\sigma_d=0.5$.
 
-- **Hess et al. (2025).** *Physically consistent downscaling of climate model output using consistency models.* Nature Machine Intelligence.
-  → CM applied to univariate climate downscaling; stroke guidance for GCM conditioning; training and evaluation protocol.
+- **Hess et al. (2025).** *Fast, scale-adaptive and uncertainty-aware downscaling of Earth system model fields with generative machine learning.* Nature Machine Intelligence, 7, 363–373.
+  → Consistency-model-based climate downscaling: generative downscaling of climate model fields, GCM conditioning, and training/evaluation protocol.
 
-- **Keisler et al. (2026).** *SerpentFlow: Spectral-domain flow matching for multivariate statistical downscaling.* (in preparation).
-  → SerpentFlow: spectral LP scale separation, EDM-skewed flow matching, multivariate joint generation.
+- **Keisler et al. (2026).** *SerpentFlow: Spectral-domain flow matching for multivariate statistical downscaling.* HAL open archive, hal-05491335.
+  → SerpentFlow: spectral low-pass scale separation, EDM-skewed flow matching, and multivariate joint generation.
+  → https://hal.science/hal-05491335
