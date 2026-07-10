@@ -29,7 +29,7 @@ adds no value.
 
 ## 2. BCSD (`bcsd`)
 
-**Type:** empirical quantile mapping + spatial disaggregation (Wood et al. 2002).
+**Type:** empirical quantile mapping + spatial disaggregation (Wood et al. 2004).
 
 **Pipeline:**
 
