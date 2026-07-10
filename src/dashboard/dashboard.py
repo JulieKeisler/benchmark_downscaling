@@ -8,6 +8,7 @@ Run with:
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -15,20 +16,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 RESULTS_DIR = ROOT / "results"
 
-# Display labels for result directory names
-METHOD_LABELS = {
-    "bicubic":     "Bicubic",
-    "bcsd":        "BCSD",
-    "gnn":         "PSM",         # Perfect Model Setting
-    "psm":         "PSM",
-    "consistency": "CM",          # Consistency Model
-    "cm":          "CM",
-    "serpentflow": "SF",          # SerpentFlow
-    "sf":          "SF",
-}
+# Import METHOD_LABELS from the canonical location (src/baselines/__init__.py)
+# so adding a method there automatically surfaces in the dashboard.
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "src" / "evaluation"))
+from baselines import METHOD_LABELS
 COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
 
 st.set_page_config(page_title="Downscaling Benchmark", layout="wide")
@@ -80,9 +75,9 @@ with st.sidebar:
 
     st.markdown("---")
     st.caption(
-        "**ERA5**: pseudo-obs (1960–2020)  \n"
-        "**GCM**: IPSL-CM6A-LR (historical + ssp585)  \n"
-        "Evaluation period: 2004–2014"
+        "**ERA5:** pseudo-obs (1960–2020)  \n"
+        "**GCM:** IPSL-CM6A-LR (historical + ssp585)  \n"
+        "**Evaluation period:** 2000–2020 against ERA5 and 2000–2100 for GCM related metrics"
     )
 
 # ── Metric groups ─────────────────────────────────────────────────────────────
@@ -95,7 +90,14 @@ OBS_METRICS = [
 GCM_METRICS = [
     "temporal_corr_annual", "temporal_corr",
     "annual_anomaly_bias", "lag1_autocorr_mae",
+    "Δ signal 2040–2060", "Δ signal 2080–2100",
 ]
+
+# Maps delta metric key -> _delta period key in metrics.json
+DELTA_PERIOD_MAP = {
+    "Δ signal 2040–2060": "2040_2060",
+    "Δ signal 2080–2100": "2080_2100",
+}
 
 METRIC_LABELS = {
     "bias_mae":             "Bias MAE (vs ERA5)",
@@ -111,17 +113,36 @@ METRIC_LABELS = {
     "temporal_corr":        "Temporal corr daily (vs GCM)",
     "annual_anomaly_bias":  "Annual anomaly bias (vs GCM)",
     "lag1_autocorr_mae":    "Lag-1 autocorr MAE (vs GCM)",
+    "Δ signal 2040–2060":   "Δ signal 2040–2060 (vs GCM)",
+    "Δ signal 2080–2100":   "Δ signal 2080–2100 (vs GCM)",
 }
 HIGHER_BETTER = {"temporal_corr_annual", "temporal_corr"}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _agg(method: str, key: str, axis: str = "vs_obs") -> float:
-    vals = [
-        raw_metrics[method][v][axis][key]
-        for v in sel_vars
-        if v in raw_metrics[method] and key in raw_metrics[method][v].get(axis, {})
-    ]
+    """Aggregate a metric across selected variables. Handles delta metrics specially."""
+    if key in DELTA_PERIOD_MAP:
+        period = DELTA_PERIOD_MAP[key]
+        vals = [
+            raw_metrics[method].get("_delta", {}).get(v, {}).get(period, float("nan"))
+            for v in sel_vars
+        ]
+    else:
+        vals = [
+            raw_metrics[method][v][axis][key]
+            for v in sel_vars
+            if v in raw_metrics[method] and key in raw_metrics[method][v].get(axis, {})
+        ]
     return float(np.nanmean(vals)) if vals else float("nan")
+
+
+def _get_metric_value(method: str, var: str, key: str) -> float:
+    """Get a single metric value for a method/variable/key combo."""
+    if key in DELTA_PERIOD_MAP:
+        period = DELTA_PERIOD_MAP[key]
+        return raw_metrics[method].get("_delta", {}).get(var, {}).get(period, float("nan"))
+    else:
+        return raw_metrics[method].get(var, {}).get("vs_gcm", {}).get(key, float("nan"))
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab_table, tab_radar, tab_lines, tab_maps, tab_intervar = st.tabs([
@@ -142,7 +163,8 @@ with tab_table:
     with col_r:
         show_gcm = st.multiselect(
             "vs GCM metrics", GCM_METRICS,
-            default=["temporal_corr_annual", "annual_anomaly_bias"],
+            default=["temporal_corr_annual", "annual_anomaly_bias",
+                     "Δ signal 2040–2060", "Δ signal 2080–2100"],
             format_func=lambda k: METRIC_LABELS.get(k, k),
         )
 
@@ -157,8 +179,19 @@ with tab_table:
             key_list.append(k)
         for k in show_gcm:
             row = {"Variable": var, "Metric": METRIC_LABELS.get(k, k)}
-            for m in sel_methods:
-                row[mlabel(m)] = raw_metrics[m].get(var, {}).get("vs_gcm", {}).get(k, float("nan"))
+            if k in DELTA_PERIOD_MAP:
+                # Delta metrics live under _delta in metrics.json
+                period = DELTA_PERIOD_MAP[k]
+                vals = {m: raw_metrics[m].get("_delta", {}).get(var, {}).get(period, float("nan"))
+                        for m in sel_methods}
+                # Only add row if at least one method has data
+                if not any(np.isfinite(v) for v in vals.values()):
+                    continue
+                for m in sel_methods:
+                    row[mlabel(m)] = vals[m]
+            else:
+                for m in sel_methods:
+                    row[mlabel(m)] = raw_metrics[m].get(var, {}).get("vs_gcm", {}).get(k, float("nan"))
             rows.append(row)
             key_list.append(k)
 
@@ -194,6 +227,18 @@ with tab_table:
     else:
         st.info("No data for the selected filters.")
 
+    # Delta heatmap visual
+    st.markdown("---")
+    comp_delta = RESULTS_DIR / "comparison" / "delta_heatmap.png"
+    if comp_delta.exists():
+        st.subheader("Delta change scores — heatmap")
+        st.caption(
+            "Mean absolute error between method's and GCM's relative climate change signal "
+            "(% change future vs historical). Lower = better. "
+            "Only methods with predictions through 2100 produce these scores (see Δ signal rows above)."
+        )
+        st.image(str(comp_delta), use_container_width=True)
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 2 — Radar
 # ══════════════════════════════════════════════════════════════════════════════
@@ -206,7 +251,7 @@ with tab_radar:
     )
     radar_gcm_keys = st.multiselect(
         "vs GCM metrics on radar", GCM_METRICS,
-        default=["temporal_corr_annual"],
+        default=["temporal_corr_annual", "Δ signal 2040–2060", "Δ signal 2080–2100"],
         format_func=lambda k: METRIC_LABELS.get(k, k),
         key="radar_gcm",
     )
@@ -292,6 +337,7 @@ with tab_lines:
 
         elif line_type == "annual":
             gcm_done = False
+            era5_done = False
             for m in sel_methods:
                 d = plot_data.get(m, {}).get(sel_var_ln, {}).get("annual")
                 if not d:
@@ -302,6 +348,12 @@ with tab_lines:
                         name="GCM", line=dict(color="black", width=2.5),
                     ))
                     gcm_done = True
+                if not era5_done and "era5" in d:
+                    fig.add_trace(go.Scatter(
+                        x=d.get("years_era5", d["years"]), y=d["era5"],
+                        name="ERA5", line=dict(color="#888888", width=2, dash="dot"),
+                    ))
+                    era5_done = True
                 years_pred = d.get("years_pred", d["years"])
                 fig.add_trace(go.Scatter(
                     x=years_pred, y=d["pred"],
@@ -396,30 +448,44 @@ with tab_maps:
     with col1:
         plot_type = st.selectbox(
             "Plot type",
-            ["bias_map", "temporal_corr", "autocorr", "annual", "cdf", "seasonal"],
+            ["bias_map", "temporal_corr", "autocorr", "delta_2040_2060", "delta_2080_2100"],
+            format_func=lambda x: {
+                "bias_map": "Bias map",
+                "temporal_corr": "Temporal correlation",
+                "autocorr": "Autocorrelation",
+                "delta_2040_2060": "Δ climate signal 2040–2060",
+                "delta_2080_2100": "Δ climate signal 2080–2100",
+            }.get(x, x),
             key="map_type",
         )
     with col2:
         sel_var_map = st.selectbox("Variable", all_vars, key="mv")
 
-    ncols = len(sel_methods)
-    plot_cols = st.columns(max(ncols, 1))
-    for col, m in zip(plot_cols, sel_methods):
-        with col:
-            st.markdown(f"**{mlabel(m)}**")
-            img = (RESULTS_DIR / m / "plots" / sel_var_map
-                   / f"{plot_type}_{sel_var_map}.png")
-            if img.exists():
-                st.image(str(img))
-            else:
-                st.caption("No image — re-run evaluate.py to regenerate")
-
-    if plot_type == "temporal_corr":
-        st.caption(
-            "These maps show **annual** temporal correlation after re-running evaluate.py. "
-            "Existing maps were generated with daily correlation (trivially ≈1 everywhere). "
-            "After re-run the colour scale auto-adjusts to the actual data range."
+    comp_dir = RESULTS_DIR / "comparison"
+    prefix_map = {
+        "bias_map": "spatial", "temporal_corr": "temporal_corr", "autocorr": "autocorr",
+        "delta_2040_2060": "delta_2040_2060", "delta_2080_2100": "delta_2080_2100",
+    }
+    comp_img = comp_dir / f"{prefix_map[plot_type]}_{sel_var_map}.png"
+    if comp_img.exists():
+        st.image(str(comp_img), use_container_width=True)
+    else:
+        st.info(
+            f"Comparison figure not yet generated. "
+            f"Run `python src/evaluation/plot_comparison.py --results-dir results` "
+            f"after evaluating all methods."
         )
+        # Fallback: per-method columns
+        ncols = len(sel_methods)
+        plot_cols = st.columns(max(ncols, 1))
+        for col, m in zip(plot_cols, sel_methods):
+            with col:
+                st.markdown(f"**{mlabel(m)}**")
+                img = RESULTS_DIR / m / "plots" / sel_var_map / f"{plot_type}_{sel_var_map}.png"
+                if img.exists():
+                    st.image(str(img))
+                else:
+                    st.caption("No image")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 5 — Inter-variable correlations
@@ -486,19 +552,22 @@ with tab_intervar:
 
     # Discover available pairs
     all_pairs: list[str] = []
-    for m in all_method_dirs:
-        pdir = RESULTS_DIR / m / "plots"
-        # Prefer separate panels (new-style)
-        for p in sorted(pdir.glob("intervar_corr_*_*_era5.png")):
+    # Prefer comparison figures
+    comp_pairs_dir = RESULTS_DIR / "comparison"
+    if comp_pairs_dir.exists():
+        for p in sorted(comp_pairs_dir.glob("intervar_corr_*_*.png")):
             parts = p.stem.split("_")
-            pair = f"{parts[2]}_{parts[3]}"
-            if pair not in all_pairs:
-                all_pairs.append(pair)
-        # Fall back to combined 3-panel PNG
-        if not all_pairs:
+            if len(parts) >= 4:
+                pair = f"{parts[2]}_{parts[3]}"
+                if pair not in all_pairs:
+                    all_pairs.append(pair)
+    # Fall back to per-method PNGs
+    if not all_pairs:
+        for m in all_method_dirs:
+            pdir = RESULTS_DIR / m / "plots"
             for p in sorted(pdir.glob("intervar_corr_*_*.png")):
                 parts = p.stem.split("_")
-                if len(parts) >= 4 and parts[-1] not in ("era5", "pred", "bias"):
+                if len(parts) == 4:
                     pair = f"{parts[2]}_{parts[3]}"
                     if pair not in all_pairs:
                         all_pairs.append(pair)
@@ -509,41 +578,15 @@ with tab_intervar:
         sel_pair = st.selectbox("Variable pair", all_pairs, key="iv_pair")
         v1, v2 = sel_pair.split("_", 1)
 
-        # Check whether separate panels exist
-        has_panels = any(
-            (RESULTS_DIR / m / "plots" / f"intervar_corr_{v1}_{v2}_era5.png").exists()
-            for m in all_method_dirs
-        )
-
-        if has_panels:
-            panel_sel = st.radio(
-                "Panel", ["ERA5 correlation", "Method prediction", "Bias (pred − ERA5)"],
-                horizontal=True, key="iv_panel",
-            )
-            suffix = {"ERA5 correlation": "era5",
-                      "Method prediction": "pred",
-                      "Bias (pred − ERA5)": "bias"}[panel_sel]
-
-            if suffix == "era5":
-                # ERA5 is identical across methods — show once
-                for m in all_method_dirs:
-                    img = RESULTS_DIR / m / "plots" / f"intervar_corr_{v1}_{v2}_era5.png"
-                    if img.exists():
-                        st.markdown(f"**ERA5 r({v1}, {v2})**")
-                        st.image(str(img))
-                        break
-            else:
-                img_cols = st.columns(max(len(sel_methods), 1))
-                for col, m in zip(img_cols, sel_methods):
-                    with col:
-                        st.markdown(f"**{mlabel(m)}**")
-                        img = RESULTS_DIR / m / "plots" / f"intervar_corr_{v1}_{v2}_{suffix}.png"
-                        if img.exists():
-                            st.image(str(img))
-                        else:
-                            st.caption("No image — re-run evaluate.py")
+        comp_iv = RESULTS_DIR / "comparison" / f"intervar_corr_{v1}_{v2}.png"
+        if comp_iv.exists():
+            st.image(str(comp_iv), use_container_width=True)
         else:
-            # Old-style: 3-panel combined PNGs, show all methods side by side
+            st.info(
+                "Comparison figure not yet generated. "
+                "Run `python src/evaluation/plot_comparison.py --results-dir results`."
+            )
+            # Fallback: per-method single-panel PNGs side by side
             img_cols = st.columns(max(len(sel_methods), 1))
             for col, m in zip(img_cols, sel_methods):
                 with col:

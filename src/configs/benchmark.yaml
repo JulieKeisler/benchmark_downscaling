@@ -1,0 +1,43 @@
+# Benchmark evaluation configuration.
+# ─────────────────────────────────────
+# Copy this file to configs/benchmark_local.yaml and fill in local paths.
+# Run:  python src/evaluation/evaluate.py --config configs/benchmark.yaml
+#       python src/evaluation/evaluate.py --config configs/benchmark_local.yaml
+
+# ── Evaluation period ──────────────────────────────────────────────────────────
+# ERA5 and GCM data are aligned to [start, end]; CMIP6 scenarios start 2015.
+period:
+  start_train: 1980
+  end_train: 1999
+  start: 2000    # inclusive; keep ≥1960 (ERA5 coverage)
+  end:   2020    # inclusive; adjust for ssp585 (ends 2100)
+  end_cmip: 2100
+
+# ── Variables ──────────────────────────────────────────────────────────────────
+# CMIP6 short names. Must be available in both era5_dir and gcm_dir.
+# Unit notes: pr is kg m⁻² s⁻¹ in CMIP6; ERA5 daily mean of hourly accumulation.
+# psl and sfcWindmax are NOT published on CDS for IPSL-CM6A-LR — download
+# from ESGF (scripts/download_cmip6_esgf.py) if needed.
+variables:
+  - tas
+  - pr
+  - sfcWind
+  - sfcWindmax
+  - psl
+
+# ── Domain ─────────────────────────────────────────────────────────────────────
+# CDS order: [North, West, South, East] in decimal degrees.
+area: [55.0, -6.0, 41.0, 10.0]   # France
+
+# ── Scenario ───────────────────────────────────────────────────────────────────
+# Used for CMIP6 files whose period spans 2015+.  Currently only ssp585.
+scenario: ssp585
+
+# ── Data paths ─────────────────────────────────────────────────────────────────
+# era5_dir: directory containing  {variable}_{year}.nc  files.
+# gcm_dir:  directory containing  {variable}_{experiment}_{start}-{end}.nc
+#           files produced by scripts/download_cmip6.py or download_cmip6_esgf.py.
+# output_dir: metrics.json + plots/ are written here.
+era5_dir:   /path/to/era5           # directory with {variable}_{year}.nc files
+gcm_dir:    /path/to/cmip6/model    # directory with CMIP6 NetCDF files
+output_dir: results/bicubic         # metrics.json + plots/ written here

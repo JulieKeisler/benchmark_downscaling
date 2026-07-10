@@ -1,11 +1,25 @@
+import sys
+import warnings
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.evaluation.metrics.inter_variables_metrics import _pointwise_corr
-from src.evaluation.metrics.scalar_metrics_gcm import lag1_autocorr, temporal_corr_annual_map
-from src.plots.utils import _add_geo, _try_cartopy
+from metrics.inter_variables_metrics import _pointwise_corr
+from metrics.scalar_metrics_gcm import lag1_autocorr, temporal_corr_annual_map
+from plots.utils import _add_geo, _try_cartopy
 import xarray as xr
 import numpy as np
+
+
+def _sm(cmap, vmin, vmax):
+    """Return a ScalarMappable for a shared colorbar (no data needed)."""
+    import matplotlib.pyplot as plt
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
+    sm = ScalarMappable(cmap=plt.get_cmap(cmap), norm=Normalize(vmin=vmin, vmax=vmax))
+    sm.set_array([])
+    return sm
+
 
 def plot_bias_map(obs: xr.DataArray, pred: xr.DataArray, variable: str,
                   method: str, plot_dir: Path,
@@ -15,8 +29,10 @@ def plot_bias_map(obs: xr.DataArray, pred: xr.DataArray, variable: str,
     ccrs, cfeature = _try_cartopy()
     import cartopy.crs as ccrs_mod
 
-    mean_bias = pred.mean("time").values - obs.mean("time").values
-    std_bias  = pred.std("time").values  - obs.std("time").values
+    obs_mean  = obs.mean("time").values
+    obs_std   = obs.std("time").values
+    mean_bias = pred.mean("time").values - obs_mean
+    std_bias  = pred.std("time").values  - obs_std
     lon = obs.lon.values
     lat = obs.lat.values
 
@@ -27,6 +43,7 @@ def plot_bias_map(obs: xr.DataArray, pred: xr.DataArray, variable: str,
     fig, axes = plt.subplots(
         1, 2, figsize=(12, 4.5),
         subplot_kw={"projection": proj} if proj else {},
+        layout="constrained",
     )
     for ax, (data, title, cmap, vm) in zip(axes, [
         (mean_bias, f"Mean bias — {variable}", "RdBu_r", vm_mean),
@@ -39,16 +56,87 @@ def plot_bias_map(obs: xr.DataArray, pred: xr.DataArray, variable: str,
         plt.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
 
     fig.suptitle(f"{method} — {variable}", fontsize=13, fontweight="bold")
-    plt.tight_layout()
     out = plot_dir / f"bias_map_{variable}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  saved {out.name}")
 
+    np.savez_compressed(
+        plot_dir / f"bias_data_{variable}.npz",
+        mean_bias=mean_bias, std_bias=std_bias,
+        obs_mean=obs_mean, obs_std=obs_std, lat=lat, lon=lon,
+    )
+
+
+def plot_spatial_comparison(
+    method_data: "dict[str, dict]",
+    variable: str,
+    out_path: "Path",
+) -> None:
+    """One figure per variable: ERA5 reference + all-method bias maps, shared colorbars."""
+    import matplotlib.pyplot as plt
+    ccrs, cfeature = _try_cartopy()
+    import cartopy.crs as ccrs_mod
+
+    methods = list(method_data.keys())
+    N = len(methods)
+    ncols = 1 + N
+
+    all_mean_bias = np.stack([method_data[m]["mean_bias"] for m in methods])
+    all_std_bias  = np.stack([method_data[m]["std_bias"]  for m in methods])
+    vm_mean = max(float(np.nanpercentile(np.abs(all_mean_bias), 98)), 1e-9)
+    vm_std  = max(float(np.nanpercentile(np.abs(all_std_bias),  98)), 1e-9)
+
+    ref      = next(iter(method_data.values()))
+    obs_mean = ref["obs_mean"]
+    obs_std  = ref["obs_std"]
+    lat      = ref["lat"]
+    lon      = ref["lon"]
+
+    proj = ccrs_mod.PlateCarree() if ccrs is not None else None
+    fig, axes = plt.subplots(
+        2, ncols, figsize=(4.2 * ncols, 7.5),
+        subplot_kw={"projection": proj} if proj else {},
+        squeeze=False, layout="constrained",
+    )
+
+    def _panel(ax, data, cmap, vmin, vmax, title):
+        im = ax.pcolormesh(lon, lat, data, cmap=cmap, vmin=vmin, vmax=vmax,
+                           transform=ccrs_mod.PlateCarree() if ccrs else None)
+        _add_geo(ax, lon, lat, ccrs, cfeature)
+        ax.set_title(title, fontsize=9)
+        return im
+
+    _panel(axes[0, 0], obs_mean, "viridis",
+           float(np.nanmin(obs_mean)), float(np.nanmax(obs_mean)), "ERA5 mean")
+    _panel(axes[1, 0], obs_std,  "plasma",
+           0.0, float(np.nanmax(obs_std)), "ERA5 std")
+    fig.colorbar(_sm("viridis", np.nanmin(obs_mean), np.nanmax(obs_mean)),
+                 ax=axes[0, 0], shrink=0.85, pad=0.03, format="%.3g")
+    fig.colorbar(_sm("plasma", 0.0, np.nanmax(obs_std)),
+                 ax=axes[1, 0], shrink=0.85, pad=0.03, format="%.3g")
+
+    for col, m in enumerate(methods, start=1):
+        d = method_data[m]
+        _panel(axes[0, col], d["mean_bias"], "RdBu_r", -vm_mean, vm_mean, f"{m}\nmean bias")
+        _panel(axes[1, col], d["std_bias"],  "PuOr",   -vm_std,  vm_std,  f"{m}\nstd bias")
+
+    fig.colorbar(_sm("RdBu_r", -vm_mean, vm_mean),
+                 ax=axes[0, 1:].tolist(), shrink=0.8, pad=0.02,
+                 label="Mean bias (pred − ERA5)", format="%.3g")
+    fig.colorbar(_sm("PuOr", -vm_std, vm_std),
+                 ax=axes[1, 1:].tolist(), shrink=0.8, pad=0.02,
+                 label="Std bias (pred − ERA5)", format="%.3g")
+
+    fig.suptitle(f"Spatial bias — {variable}", fontsize=13, fontweight="bold")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  saved {out_path.name}")
+
 
 def plot_temporal_corr(gcm: xr.DataArray, pred: xr.DataArray, variable: str,
                        method: str, plot_dir: Path) -> None:
-    """Plot annual-mean temporal correlation (daily corr is trivially ≈1 for deterministic methods)."""
     import matplotlib.pyplot as plt
     ccrs, cfeature = _try_cartopy()
     import cartopy.crs as ccrs_mod
@@ -57,24 +145,26 @@ def plot_temporal_corr(gcm: xr.DataArray, pred: xr.DataArray, variable: str,
     lon = gcm.lon.values
     lat = gcm.lat.values
 
-    # Auto-scale around the actual data range for spatial variation
+    np.savez_compressed(
+        plot_dir / f"temporal_corr_data_{variable}.npz",
+        corr=corr, lat=lat, lon=lon,
+    )
+
     vmin = max(-1.0, float(np.nanpercentile(corr, 2)))
     vmax = min( 1.0, float(np.nanpercentile(corr, 98)))
-    if vmax - vmin < 0.05:   # nearly flat — center on mean
+    if vmax - vmin < 0.05:
         vmid = float(np.nanmean(corr))
         vmin, vmax = max(-1, vmid - 0.1), min(1, vmid + 0.1)
 
     proj = ccrs_mod.PlateCarree() if ccrs is not None else None
-    fig, ax = plt.subplots(
-        figsize=(7, 5),
-        subplot_kw={"projection": proj} if proj else {},
-    )
+    fig, ax = plt.subplots(figsize=(7, 5),
+                           subplot_kw={"projection": proj} if proj else {},
+                           layout="constrained")
     im = ax.pcolormesh(lon, lat, corr, cmap="RdYlGn", vmin=vmin, vmax=vmax,
                        transform=ccrs_mod.PlateCarree() if ccrs else None)
     _add_geo(ax, lon, lat, ccrs, cfeature)
     plt.colorbar(im, ax=ax, shrink=0.8, label="Pearson r (annual)")
     ax.set_title(f"Annual temporal corr vs GCM — {variable} — {method}", fontsize=11)
-    plt.tight_layout()
     out = plot_dir / f"temporal_corr_{variable}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
@@ -83,36 +173,32 @@ def plot_temporal_corr(gcm: xr.DataArray, pred: xr.DataArray, variable: str,
 
 def plot_autocorr_comparison(gcm: xr.DataArray, pred: xr.DataArray, variable: str,
                              method: str, plot_dir: Path) -> None:
+    """Save autocorr data for comparison, and per-method diff map (1 panel)."""
     import matplotlib.pyplot as plt
     ccrs, cfeature = _try_cartopy()
     import cartopy.crs as ccrs_mod
 
     ac_gcm  = lag1_autocorr(gcm).values
     ac_pred = lag1_autocorr(pred).values
-    diff = ac_pred - ac_gcm
+    diff    = ac_pred - ac_gcm
     lon = gcm.lon.values
     lat = gcm.lat.values
 
-    proj = ccrs_mod.PlateCarree() if ccrs is not None else None
-    fig, axes = plt.subplots(
-        1, 3, figsize=(16, 4.5),
-        subplot_kw={"projection": proj} if proj else {},
+    np.savez_compressed(
+        plot_dir / f"autocorr_data_{variable}.npz",
+        ac_gcm=ac_gcm, ac_pred=ac_pred, lat=lat, lon=lon,
     )
-    for ax, data, title, cmap, sym in [
-        (axes[0], ac_gcm,  "GCM lag-1 autocorr",      "RdYlGn", False),
-        (axes[1], ac_pred, f"{method} lag-1 autocorr", "RdYlGn", False),
-        (axes[2], diff,    "Difference (pred − GCM)",  "RdBu_r", True),
-    ]:
-        vm = np.nanpercentile(np.abs(data), 98) if sym else None
-        kw = {"cmap": cmap, "transform": ccrs_mod.PlateCarree() if ccrs else None}
-        kw.update({"vmin": -vm, "vmax": vm} if sym else {"vmin": -1, "vmax": 1})
-        im = ax.pcolormesh(lon, lat, data, **kw)
-        _add_geo(ax, lon, lat, ccrs, cfeature)
-        ax.set_title(title, fontsize=10)
-        plt.colorbar(im, ax=ax, shrink=0.8)
 
-    fig.suptitle(f"Lag-1 autocorrelation — {variable}", fontsize=12, fontweight="bold")
-    plt.tight_layout()
+    vm = max(float(np.nanpercentile(np.abs(diff), 98)), 1e-9)
+    proj = ccrs_mod.PlateCarree() if ccrs is not None else None
+    fig, ax = plt.subplots(figsize=(7, 5),
+                           subplot_kw={"projection": proj} if proj else {},
+                           layout="constrained")
+    im = ax.pcolormesh(lon, lat, diff, cmap="RdBu_r", vmin=-vm, vmax=vm,
+                       transform=ccrs_mod.PlateCarree() if ccrs else None)
+    _add_geo(ax, lon, lat, ccrs, cfeature)
+    plt.colorbar(im, ax=ax, shrink=0.8, label="Δ lag-1 autocorr (pred − GCM)")
+    ax.set_title(f"Autocorr diff — {variable} — {method}", fontsize=11)
     out = plot_dir / f"autocorr_{variable}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
@@ -124,63 +210,81 @@ def plot_intervar_corr(obs1: xr.DataArray, obs2: xr.DataArray,
                        var1: str, var2: str,
                        method: str, plot_dir: Path,
                        diff_vmax: float = 0.5) -> None:
-    """Three-panel map (ERA5 corr / pred corr / bias) + separate ERA5 and pred PNGs.
-
-    Separate files allow the dashboard to show ERA5 once with all methods alongside.
-    """
+    """Save intervar corr data; per-method PNG shows pred correlation only."""
     import matplotlib.pyplot as plt
     ccrs, cfeature = _try_cartopy()
     import cartopy.crs as ccrs_mod
 
-    obs_corr  = _pointwise_corr(obs1, obs2)
+    era5_corr = _pointwise_corr(obs1, obs2)
     pred_corr = _pointwise_corr(pred1, pred2)
-    diff      = pred_corr - obs_corr
+    diff      = pred_corr - era5_corr
     lon = obs1.lon.values
     lat = obs1.lat.values
 
-    proj = ccrs_mod.PlateCarree() if ccrs is not None else None
-
-    # Combined 3-panel figure (backward compat)
-    fig, axes = plt.subplots(
-        1, 3, figsize=(16, 4.5),
-        subplot_kw={"projection": proj} if proj else {},
+    np.savez_compressed(
+        plot_dir / f"intervar_corr_data_{var1}_{var2}.npz",
+        era5_corr=era5_corr, pred_corr=pred_corr, diff=diff, lat=lat, lon=lon,
     )
-    for ax, data, title, cmap, vmin, vmax in [
-        (axes[0], obs_corr,  f"ERA5 r({var1},{var2})",     "RdBu_r", -1,         1),
-        (axes[1], pred_corr, f"{method} r({var1},{var2})", "RdBu_r", -1,         1),
-        (axes[2], diff,      "Bias (pred − ERA5)",         "PuOr",   -diff_vmax, diff_vmax),
-    ]:
-        im = ax.pcolormesh(lon, lat, data, cmap=cmap, vmin=vmin, vmax=vmax,
-                           transform=ccrs_mod.PlateCarree() if ccrs else None)
-        _add_geo(ax, lon, lat, ccrs, cfeature)
-        ax.set_title(title, fontsize=10)
-        plt.colorbar(im, ax=ax, shrink=0.8)
 
-    fig.suptitle(f"Inter-variable correlation — {var1} × {var2} — {method}",
-                 fontsize=12, fontweight="bold")
-    plt.tight_layout()
+    proj = ccrs_mod.PlateCarree() if ccrs is not None else None
+    fig, ax = plt.subplots(figsize=(7, 5),
+                           subplot_kw={"projection": proj} if proj else {},
+                           layout="constrained")
+    im = ax.pcolormesh(lon, lat, pred_corr, cmap="RdBu_r", vmin=-1, vmax=1,
+                       transform=ccrs_mod.PlateCarree() if ccrs else None)
+    _add_geo(ax, lon, lat, ccrs, cfeature)
+    plt.colorbar(im, ax=ax, shrink=0.8, label="Pearson r")
+    ax.set_title(f"{method} r({var1},{var2})", fontsize=11)
     out = plot_dir / f"intervar_corr_{var1}_{var2}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
+    print(f"  saved intervar_corr_{var1}_{var2}.png")
 
-    # Save separate panels so the dashboard can overlay all methods
-    for data, suffix, cmap, vmin, vmax, title in [
-        (obs_corr,  "era5", "RdBu_r", -1,         1,         f"ERA5 r({var1},{var2})"),
-        (pred_corr, "pred", "RdBu_r", -1,         1,         f"{method} r({var1},{var2})"),
-        (diff,      "bias", "PuOr",   -diff_vmax, diff_vmax, f"Bias pred−ERA5"),
+
+def plot_delta_map(
+    pred_delta: np.ndarray,
+    gcm_delta:  np.ndarray,
+    bias:       np.ndarray,
+    lat: np.ndarray,
+    lon: np.ndarray,
+    variable: str,
+    method: str,
+    period_label: str,
+    plot_dir: Path,
+) -> None:
+    """3-panel map: GCM warming signal | method warming signal | bias (pred - GCM)."""
+    np.savez_compressed(
+        plot_dir / f"delta_data_{variable}_{period_label}.npz",
+        pred_delta=pred_delta, gcm_delta=gcm_delta, bias=bias, lat=lat, lon=lon,
+    )
+
+    import matplotlib.pyplot as plt
+    ccrs, cfeature = _try_cartopy()
+    import cartopy.crs as ccrs_mod
+
+    proj = ccrs_mod.PlateCarree() if ccrs is not None else None
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5),
+                             subplot_kw={"projection": proj} if proj else {},
+                             squeeze=False, layout="constrained")
+
+    vm_sig = max(float(np.nanpercentile(np.abs(np.concatenate([pred_delta.ravel(), gcm_delta.ravel()])), 98)), 1e-9)
+    vm_bias = max(float(np.nanpercentile(np.abs(bias), 98)), 1e-9)
+    tr = ccrs_mod.PlateCarree() if ccrs else None
+
+    for ax, data, title, vm in [
+        (axes[0, 0], gcm_delta,  f"GCM Δ{variable} {period_label.replace('_','–')}", vm_sig),
+        (axes[0, 1], pred_delta, f"{method} Δ{variable}", vm_sig),
+        (axes[0, 2], bias,       f"{method} bias (pred−GCM)", vm_bias),
     ]:
-        fig2, ax2 = plt.subplots(
-            figsize=(6, 4.5),
-            subplot_kw={"projection": proj} if proj else {},
-        )
-        im2 = ax2.pcolormesh(lon, lat, data, cmap=cmap, vmin=vmin, vmax=vmax,
-                             transform=ccrs_mod.PlateCarree() if ccrs else None)
-        _add_geo(ax2, lon, lat, ccrs, cfeature)
-        ax2.set_title(title, fontsize=10)
-        plt.colorbar(im2, ax=ax2, shrink=0.8)
-        plt.tight_layout()
-        fig2.savefig(plot_dir / f"intervar_corr_{var1}_{var2}_{suffix}.png",
-                     dpi=150, bbox_inches="tight")
-        plt.close()
+        im = ax.pcolormesh(lon, lat, data, cmap="RdBu_r", vmin=-vm, vmax=vm,
+                           transform=tr)
+        _add_geo(ax, lon, lat, ccrs, cfeature)
+        ax.set_title(title, fontsize=9)
+        plt.colorbar(im, ax=ax, shrink=0.8)
 
-    print(f"  saved intervar_corr_{var1}_{var2}*.png")
+    fig.suptitle(f"Climate change signal — {variable} {period_label.replace('_','–')}",
+                 fontsize=11, fontweight="bold")
+    out = plot_dir / f"delta_{period_label}_{variable}.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  saved delta_{period_label}_{variable}.png")

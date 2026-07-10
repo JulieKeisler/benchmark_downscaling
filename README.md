@@ -1,19 +1,90 @@
-# benchmark_downscaling
+# Downscaling benchmark for climate impact studies
 
-A benchmark for evaluating downscaling and bias correction methods for
-climate impact studies (in progress — currently: data download). Reference
-data is ERA5 (reanalysis, used as pseudo-observations, 1960–2020); model
-data comes from CMIP6 GCMs (1960–2100). The default domain is centered over
+A benchmark for evaluating downscaling and bias-correction methods for climate
+impact studies. Reference data is ERA5 daily reanalysis (pseudo-observations,
+1980–2020); model data comes from CMIP6 GCMs (1960–2100). Default domain:
 France, daily resolution.
+
+---
 
 ## Repository layout
 
 ```
-configs/data/   era5.yaml, cmip6.yaml — area, period, variables, models
-scripts/        download_era5.py, download_cmip6.py
-data/raw/       downloaded NetCDF files (not committed)
-papers/         reference literature
+src/
+  baselines/
+    inference_bicubic.py      bicubic regridding baseline
+    inference_bcsd.py         BCSD (quantile mapping + delta scaling)
+    inference_cdft.py         CDF-t (quantile mapping)
+    inference_idownscale.py   iDownscale (CDF-t on coarse data + MSE regression UNet, trained on perfect prognosis)
+    inference_serpentflow.py  SerpentFlow (spatial frequency-base alignment+flow-matching UNet, train + infer)
+    inference_cm.py           Consistency model inference
+    train_consistency.py      Consistency model training
+    methods.py                shared physical post-processing helpers
+    __init__.py               METHOD_REGISTRY + METHOD_LABELS
+    utils/
+      dataset.py              ERA5DownscalingDataset (all three neural modes)
+      training.py             unified train loop (idownscale / serpentflow / cm)
+      inference_utils.py      neural_predict (regression / ODE / stroke guidance)
+      unet.py                 UNet and UNetAttention architectures
+      normalization.py        encode / decode, compute_stats, LOG_VARS
+      fourier.py              spectral_lowpass (2D Fourier low-pass filter)
+      month.py                month_channels (sin/cos encoding)
+      ema.py                  EMA (exponential moving average of weights)
+
+  configs/
+    benchmark.yaml            evaluation config (period, variables, paths)
+    methods.yaml              documented hyperparameters per method
+    data/
+      era5.yaml               ERA5 download config (area, period, variables)
+      cmip6.yaml              CMIP6 download config (models, scenario)
+
+  data_download/
+    DATA.md                   data sources, expected formats, unit traps
+    cds/
+      download_era5.py        ERA5 daily stats + wind → data/raw/era5/
+      download_cmip6.py       CMIP6 GCMs via CDS API → data/raw/cmip6/
+      hourly_era5.py          hourly ERA5 wind → aggregated sfcWind files
+    esgf/
+      download_cmip6_esgf.py  ESGF download (psl / sfcWindmax missing from CDS)
+    local_data/
+      convert_serpentflow_wind.py  unit conversion for local SF wind data
+    wb2_archive/
+      download_wb2.py         [archived] WeatherBench2 download
+
+  evaluation/
+    data_processing.py        load_era5, load_gcm, bicubic_regrid, save_predictions
+    evaluate.py               compute all metrics, write metrics.json + plot_data.json
+    plot_comparison.py        multi-method comparison figures
+    psd_sweep.py              spectral diagnostics sweep
+
+  metrics/
+    scalar_metrics_era5.py    bias, RMSE, KS stat, seasonal MAE, extremes
+    scalar_metrics_gcm.py     temporal correlation, lag-1 autocorrelation, delta scores
+    inter_variables_metrics.py  multivariate Spearman correlation
+    spatial_spectrum_metrics.py  isotropic power spectral density (spectral_mae)
+
+  plots/
+    spatial_plots.py          bias maps, temporal correlation, delta maps
+    line_plots.py             CDF, seasonal cycle, annual anomalies, spectra
+    radar_plots.py            radar chart across all metrics
+    utils.py                  cartopy helpers
+
+  dashboard/
+    dashboard.py              Streamlit app — browse results interactively
+
+tests/
+  conftest.py
+  test_data_processing.py
+  test_methods.py
+  test_metrics.py
+  test_registry.py
+
+CONTRIBUTING.md               guide for adding a new method
+TUTORIALS.md                  step-by-step walk-throughs
+requirements.txt              cdsapi, pyyaml, xarray, netcdf4, requests
 ```
+
+---
 
 ## Installation
 
@@ -21,131 +92,84 @@ papers/         reference literature
 pip install -r requirements.txt
 ```
 
-## Downloading the data
-
-Both scripts use the [Copernicus Climate Data Store (CDS)](https://cds.climate.copernicus.eu). One-time setup:
-
-1. Create a free account at https://cds.climate.copernicus.eu and accept the
-   licence of each dataset on its page ("ERA5 post-processed daily statistics
-   on single levels" and "CMIP6 climate projections").
-2. Put your API key in `~/.cdsapirc`:
-
-   ```
-   url: https://cds.climate.copernicus.eu/api
-   key: <your-personal-access-token>
-   ```
-
-Then:
+For neural baselines (iDownscale, SerpentFlow, Consistency Model) also install:
 
 ```bash
-# ERA5 reference data -> data/raw/era5/
-python scripts/download_era5.py
-
-# CMIP6 GCM data -> data/raw/cmip6/<model>/<variable>_<experiment>_<start>-<end>.nc
-python scripts/download_cmip6.py
-
-# Common options
-python scripts/download_era5.py --variables tas pr   # subset of variables
-python scripts/download_era5.py --no-wind            # skip the wind pipeline
-python scripts/download_cmip6.py --models cesm2      # subset of models
-python scripts/download_era5.py --jobs 8             # parallel CDS requests
-python scripts/download_era5.py --config my.yaml     # alternative config
+pip install torch torchdiffeq
 ```
 
-Both scripts skip outputs that already exist, so they can be interrupted
-and re-run at any time.
+Python 3.10+ recommended.
 
-Each request is sized to sit just under the CDS cost limits (checked
-against the `/costing` API; the script also verifies this before
-submitting anything, so an oversized selection fails immediately with the
-actual numbers instead of one 403 per request):
+---
 
-- Daily statistics: the cost limit is **400 variable-days per request**,
-  so one variable × one year (365) is the largest selection that fits →
-  `data/raw/era5/<short_name>_<year>.nc`, 61 requests per variable.
-- Hourly wind: the cost limit is 121,000 and one year of `u+v` costs
-  ~105,120 → one year per request, 61 requests, then local aggregation to
-  `sfcWind_<year>.nc` / `sfcWindmax_<year>.nc`.
+## Data
 
-Requests are submitted in parallel (`--jobs`, default 4) — this is the
-main throughput lever, since the request sizes are maxed out. Raising
-`--jobs` beyond ~8 rarely helps: the CDS caps how many of *your* requests
-it processes concurrently, so the queue — not your connection — is the
-bottleneck.
+See [`src/data_download/DATA.md`](src/data_download/DATA.md) for data sources,
+script descriptions, and expected file formats.
 
-**Wind is derived, not downloaded:** the ERA5 daily-statistics dataset has
-no wind-speed variable (only `u`/`v` components, and daily statistics of
-components cannot give daily mean or max *speed*). The script therefore
-downloads hourly `10m_u/v`, computes `speed = √(u² + v²)` per hour, and
-aggregates locally to daily mean (`sfcWind`) and daily max (`sfcWindmax`) —
-matching the CMIP6 definitions. The raw hourly chunks (~250 MB/year) are
-deleted after aggregation unless `keep_hourly: true` is set in the config.
+```bash
+python src/data_download/cds/download_era5.py    # needs ~/.cdsapirc
+python src/data_download/cds/download_cmip6.py
+# both accept --config, --variables, --jobs (parallel requests)
+# cmip6 also accepts --models
+```
 
-### What gets downloaded
+---
 
-| Short name   | Description                        | ERA5 source                                       | CMIP6 variable |
-| ------------ | ---------------------------------- | ------------------------------------------------- | -------------- |
-| `tas`        | Near-surface air temperature       | `2m_temperature` (daily mean)                     | `tas`          |
-| `sfcWind`    | Near-surface wind speed            | hourly `10m_u/v` → daily mean of √(u²+v²)         | `sfcWind`      |
-| `sfcWindmax` | Daily maximum wind speed           | hourly `10m_u/v` → daily max of √(u²+v²)          | `sfcWindmax`   |
-| `pr`         | Precipitation                      | `total_precipitation` (daily mean)                | `pr`           |
-| `rsds`       | Surface downwelling solar radiation| `surface_solar_radiation_downwards` (daily mean)  | `rsds`         |
-| `psl`        | Sea level pressure                 | `mean_sea_level_pressure` (daily mean)            | `psl`          |
+## Running the evaluation
 
-GCMs: **IPSL-CM6A-LR**, **CNRM-CM6-1**, **CESM2**. ERA5 covers 1960–2020;
-the CMIP6 download covers 1960–2100, with 1960–2014 from the `historical`
-experiment and 2015 onwards from `ssp585`.
+**Step 1 — run inference for a method:**
 
-Domain: `[55.0, -6.0, 41.0, 10.0]` = North, West, South, East (France).
+```bash
+# Bicubic (no GPU, no training)
+python src/baselines/inference_bicubic.py \
+    --era5-dir /path/to/era5 --gcm-dir /path/to/cmip6/ipsl_cm6a_lr \
+    --out-dir /path/to/results/bicubic
 
-**Unit caveats:** ERA5 accumulated variables are delivered as daily *means
-of hourly accumulations*: multiply `pr` by `24 × 1000` for mm/day, divide
-`rsds` by `3600` for W m⁻². CMIP6 `pr` is a flux in kg m⁻² s⁻¹: multiply by
-`86400` for mm/day. Not every GCM publishes every variable at daily
-resolution on the CDS; the script reports failures at the end and keeps
-going (the [ESGF](https://esgf-node.llnl.gov/search/cmip6/) is the fallback
-for anything missing).
+# BCSD
+python src/baselines/inference_bcsd.py \
+    --era5-dir /path/to/era5 --gcm-dir /path/to/cmip6/ipsl_cm6a_lr \
+    --out-dir /path/to/results/bcsd
 
-**ERA5 known issue (June 2026):** the `*_since_previous_post_processing`
-parameters of the daily-statistics dataset (max/min 2m temperature, 10m
-wind gust, max/min total precipitation rate) are computed over a time
-window shifted by +1 hour: these are interval variables whose 00:00 step
-describes the previous day, and ECMWF's processing missed the required
-one-hour shift. Daily means are barely affected, but extremes near midnight
-land on the wrong day — do not use these parameters until the fix announced
-in the [ECMWF forum](https://forum.ecmwf.int/t/issue-affecting-some-parameters-from-the-era5-post-processed-daily-statistics-on-single-levels/15057)
-is released ([known-issues page](https://confluence.ecmwf.int/display/CKB/ERA5+family+post-processed+daily+statistics+documentation)).
-None of the default variables here are affected (`sfcWindmax` is the daily
-maximum of instantaneous `10m_wind_speed`, not the wind gust parameter), and
-`scripts/download_era5.py` refuses to download the affected parameters
-(`KNOWN_ISSUE_VARIABLES`; clear it once the fix lands). If you need daily
-max/min temperature, use `2m_temperature` with `daily_maximum` /
-`daily_minimum` instead.
+# CDF-t
+python src/baselines/inference_cdft.py \
+    --era5-dir /path/to/era5 --gcm-dir /path/to/cmip6/ipsl_cm6a_lr \
+    --out-dir /path/to/results/cdft
 
-### Troubleshooting
+# SerpentFlow (trains then infers, needs GPU)
+python src/baselines/inference_serpentflow.py \
+    --era5-dir /path/to/era5 --gcm-dir /path/to/cmip6/ipsl_cm6a_lr \
+    --out-dir /path/to/results/serpentflow
 
-- **`Unknown API state 'rejected'` on every request:** your `cdsapi` is
-  outdated and cannot talk to the current CDS — `pip install -U cdsapi`
-  (you need ≥ 0.7). Also check that `~/.cdsapirc` uses the new format shown
-  above (no `/v2` in the URL, no `UID:` prefix in the key).
-- **`cost limits exceeded` (403):** the selection in your config is too
-  large for one request. The script checks one representative request
-  against the CDS `/costing` endpoint before submitting and prints the
-  actual cost vs. limit; shrink the selection accordingly (e.g. wind
-  `years_per_request` must stay 1).
-- A re-run only downloads what is missing, so after fixing an error just
-  run the same command again.
+# Consistency Model — train first, then infer
+python src/baselines/train_consistency.py \
+    --era5-dir /path/to/era5 --output-dir /path/to/checkpoints
+python src/baselines/inference_cm.py \
+    --era5-dir /path/to/era5 --gcm-dir /path/to/cmip6/ipsl_cm6a_lr \
+    --checkpoint-dir /path/to/checkpoints --out-dir /path/to/results/cm
+```
 
-### Adding variables, areas, or GCMs
+**Step 2 — evaluate:**
 
-- **New ERA5 variable:** add `short_name: era5_name` under the appropriate
-  statistic in the `daily_statistics` section of `configs/data/era5.yaml`
-  (era5 names are listed on the CDS dataset page).
-- **New CMIP6 variable:** add the CMIP6 short name to
-  `configs/data/cmip6.yaml` and, if it is not already there, its CDS long
-  name to `CDS_VARIABLES` in `scripts/download_cmip6.py`.
-- **New GCM:** add its CDS model id (lowercase, underscores — e.g.
-  `mpi_esm1_2_lr`) to the `models` list in `configs/data/cmip6.yaml`.
-- **Different area or period:** edit `area` (N, W, S, E in degrees) and
-  `years` in both config files. Keep the two consistent so observations and
-  models cover the same domain.
+```bash
+python src/evaluation/evaluate.py \
+    --era5-dir /path/to/era5 --gcm-dir /path/to/cmip6/ipsl_cm6a_lr \
+    --method bicubic \
+    --pred-dir /path/to/results/bicubic \
+    --output-dir /path/to/results \
+    --start 2000 --end 2020 --gcm-end 2100
+```
+
+**Step 3 — dashboard:**
+
+```bash
+streamlit run src/dashboard/dashboard.py
+# Open http://localhost:8501
+# Results are auto-discovered from results/*/metrics.json
+```
+
+---
+
+## Adding a new method
+
+See `CONTRIBUTING.md` for the full walk-through.

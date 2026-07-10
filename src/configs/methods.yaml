@@ -1,0 +1,28 @@
+# Default hyperparameters for each baseline method.
+# These document what values the inference scripts use by default.
+# Override at the command line: --stroke-time 3.0 --n-members 5
+
+bicubic: {}   # stateless — no hyperparameters
+
+bcsd: {}      # stateless — fits distribution per month/cell at inference time
+
+cdft: {}      # stateless — bicubic upsample then per-cell monthly QM at ERA5 resolution
+
+idownscale:   # CERFACS U-Net perfect-prognosis downscaling (Soares et al. 2024)
+  epochs: 30       # U-Net training epochs
+  batch_size: 32   # training batch size
+  # At inference: per-variable CDF-t is applied at the coarse GCM resolution
+  # (vs ERA5 coarsened) before bicubic upsampling to the ERA5 fine grid.
+
+consistency:
+  stroke_time: 5.0   # PSD-calibrated t* (Hess et al.); higher = more stochastic
+  n_members: 1       # stochastic draws to average (trade speed for diversity)
+  batch_size: 16     # inference batch size; reduce if GPU OOM
+
+serpentflow:
+  # SerpentFlow is NOT self-contained: it requires the SF source tree at import
+  # time (from src.inference import ...).  Use inference_serpentflow.py only
+  # from within the SF repository environment, not from this benchmark tree.
+  # Output format also differs from other methods — see serpentflow_load_predictions()
+  # in evaluate.py.
+  r_cut: 1           # Fourier low-pass radius used during SF data prep

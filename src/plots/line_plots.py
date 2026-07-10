@@ -79,17 +79,20 @@ def plot_seasonal_cycle(obs: xr.DataArray, pred: xr.DataArray, variable: str,
 
     
 def plot_annual_anomalies(gcm: xr.DataArray, pred: xr.DataArray, variable: str,
-                          method: str, plot_dir: Path) -> None:
+                          method: str, plot_dir: Path,
+                          obs: xr.DataArray | None = None) -> None:
     import matplotlib.pyplot as plt
 
     gcm_ann  = gcm.mean(["lat", "lon"]).groupby("time.year").mean("time")
     pred_ann = pred.mean(["lat", "lon"]).groupby("time.year").mean("time")
 
-    fig, ax = plt.subplots(figsize=(9, 4))
-    # Use each array's own year axis to avoid length mismatches (e.g. consistency
-    # prediction time axis may differ slightly from per-variable gcm time axis)
-    ax.plot(gcm_ann.year.values,  gcm_ann.values,  "k-",  label="GCM",    lw=1.5)
-    ax.plot(pred_ann.year.values, pred_ann.values,  "b--", label=method,   lw=1.5)
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(gcm_ann.year.values,  gcm_ann.values,  "k-",  label="GCM",   lw=1.5)
+    ax.plot(pred_ann.year.values, pred_ann.values,  "b--", label=method,  lw=1.8)
+    if obs is not None:
+        obs_ann = obs.mean(["lat", "lon"]).groupby("time.year").mean("time")
+        ax.plot(obs_ann.year.values, obs_ann.values, color="0.45", ls=":",
+                label="ERA5", lw=1.8, zorder=5)
     ax.legend(); ax.grid(alpha=0.3)
     ax.set_xlabel("Year"); ax.set_ylabel(variable)
     ax.set_title(f"Annual means — {variable} — {method}", fontsize=12)

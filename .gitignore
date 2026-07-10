@@ -1,6 +1,11 @@
-# downloaded data and experiment outputs
-data/raw/
+# local things
+data/
 results/
+jz/
+cleps/
+papers/
+.claude
+CLAUDE.md
 
 # python
 __pycache__/
