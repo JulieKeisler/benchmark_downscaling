@@ -426,6 +426,6 @@ channel (simpler than sinusoidal embedding; unified across modes).
 - **Hess et al. (2025).** *Fast, scale-adaptive and uncertainty-aware downscaling of Earth system model fields with generative machine learning.* Nature Machine Intelligence, 7, 363–373.
   → Consistency-model-based climate downscaling: generative downscaling of climate model fields, GCM conditioning, and training/evaluation protocol.
 
-- **Keisler et al. (2026).** *SerpentFlow: Spectral-domain flow matching for multivariate statistical downscaling.* HAL open archive, hal-05491335.
-  → SerpentFlow: spectral low-pass scale separation, EDM-skewed flow matching, and multivariate joint generation.
+- **Keisler et al. (2026).** *Generative Unsupervised Downscaling of Climate Models via Domain Alignment: Application to Wind Fields.* HAL open archive, hal-05491335.
+  → Generative unsupervised downscaling of climate-model wind fields using domain alignment; multivariate wind-field generation and climate-model-to-observation distribution matching.
   → https://hal.science/hal-05491335
