@@ -151,7 +151,7 @@ per-month KS statistic:
 ## 4. iDownscale (`idownscale`)
 
 **Type:** supervised U-Net regression with perfect-prognosis training
-(Soares et al. 2024 / CERFACS approach).
+(CERFACS, [iDownscale EGU26 short course](https://github.com/cerfacs-globc/idownscale/tree/master/docs/egu26_short_course)).
 
 **Training (ERA5 only, 1980–1999).**
 Pairs are constructed from ERA5 alone by subsampling (stride 4) and regridding:
@@ -414,7 +414,7 @@ channel (simpler than sinusoidal embedding; unified across modes).
 - **Michelangeli et al. (2009).** *Probabilistic downscaling approaches: Application to wind cumulative distribution functions.* Geophysical Research Letters, 36(11).
   → CDF-t method: accounting for distribution shift between calibration and projection periods.
 
-- **Soares et al. (2024).** *iDownscale: A machine learning-based hybrid downscaling approach for climate projections.* CERFACS technical report / Geoscientific Model Development (submitted).
+- **CERFACS (2025).** *iDownscale: EGU26 short course on ML-based downscaling.* [github.com/cerfacs-globc/idownscale](https://github.com/cerfacs-globc/idownscale/tree/master/docs/egu26_short_course).
   → iDownscale: perfect-prognosis U-Net regression with coarse CDF-t pre-correction.
 
 - **Song et al. (2023).** *Consistency Models.* arXiv:2303.01469.
