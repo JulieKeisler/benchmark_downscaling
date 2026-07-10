@@ -20,7 +20,9 @@ These metrics compare method predictions to ERA5 over the historical period
 
 Mean absolute temporal-mean bias across all grid points:
 
-$$\text{bias\_mae} = \frac{1}{N} \sum_{i=1}^{N} \left| \bar{y}_i - \bar{\hat{y}}_i \right|$$
+$$
+B = \frac{1}{N} \sum_{i=1}^{N} \left| \bar{y}_i - \bar{\hat{y}}_i \right|
+$$
 
 where $\bar{y}_i = \frac{1}{T} \sum_t y_{t,i}$ is the ERA5 time mean at grid point $i$.
 Lower is better.
@@ -29,7 +31,9 @@ Lower is better.
 
 Mean absolute error of temporal standard deviation across all grid points:
 
-$$\text{std\_error} = \frac{1}{N} \sum_{i=1}^{N} \left| \sigma(\hat{y}_i) - \sigma(y_i) \right|$$
+$$
+S = \frac{1}{N} \sum_{i=1}^{N} \left| \sigma(\hat{y}_i) - \sigma(y_i) \right|
+$$
 
 where $\sigma(\cdot)$ is the temporal standard deviation. Measures how well the method
 reproduces daily variability amplitude. Lower is better.
@@ -39,7 +43,9 @@ reproduces daily variability amplitude. Lower is better.
 Kolmogorov–Smirnov distance between flattened (all grid points × all timesteps)
 empirical distributions:
 
-$$\text{KS}(F_y, F_{\hat{y}}) = \sup_x \left| F_y(x) - F_{\hat{y}}(x) \right|$$
+$$
+\mathrm{KS}(F_y, F_{\hat{y}}) = \sup_x \left| F_y(x) - F_{\hat{y}}(x) \right|
+$$
 
 Three variants:
 - `ks_full`: full marginal distribution.
@@ -55,16 +61,21 @@ Lower is better. Computed via `scipy.stats.ks_2samp`.
 
 MAE of the 12-month climatology averaged over space and months:
 
-$$\text{seasonal\_mae} = \frac{1}{12} \sum_{m=1}^{12} \frac{1}{N} \sum_{i=1}^{N} \left| \hat{\mu}_{m,i} - \mu_{m,i} \right|$$
+$$
+M_{\mathrm{seas}} = \frac{1}{12} \sum_{m=1}^{12} \frac{1}{N} \sum_{i=1}^{N} \left| \hat{\mu}_{m,i} - \mu_{m,i} \right|
+$$
 
-where $\mu_{m,i} = \text{mean}_{t:\,\text{month}(t)=m}\; y_{t,i}$ is the ERA5 monthly climatology.
+where $\mu_{m,i}$ is the ERA5 monthly climatology at grid point $i$ for month $m$,
+defined as the mean over all timesteps $t$ with $\mathrm{month}(t) = m$.
 Measures the ability to reproduce the seasonal cycle. Lower is better.
 
 ### 1.5 Extreme frequency bias (`extreme_freq`)
 
 Bias in the fraction of days exceeding the ERA5 global 95th percentile $q_{0.95}$:
 
-$$\text{extreme\_freq} = \frac{1}{N} \sum_{i=1}^{N} \left[ P(\hat{y}_{t,i} > q_{0.95}) - P(y_{t,i} > q_{0.95}) \right]$$
+$$
+E_{\mathrm{freq}} = \frac{1}{N} \sum_{i=1}^{N} \left[ P(\hat{y}_{t,i} > q_{0.95}) - P(y_{t,i} > q_{0.95}) \right]
+$$
 
 The threshold $q_{0.95}$ is a single global quantile over all grid points and
 timesteps. A positive value means the method generates too many extreme events;
@@ -74,7 +85,9 @@ negative means too few.
 
 Bias in the mean intensity of events exceeding $q_{0.95}$:
 
-$$\text{extreme\_intensity} = \frac{1}{N} \sum_{i=1}^{N} \left[ \mathbb{E}[\hat{y}_{t,i} \mid \hat{y}_{t,i} > q_{0.95}] - \mathbb{E}[y_{t,i} \mid y_{t,i} > q_{0.95}] \right]$$
+$$
+E_{\mathrm{int}} = \frac{1}{N} \sum_{i=1}^{N} \left[ \mathbb{E}[\hat{y}_{t,i} \mid \hat{y}_{t,i} > q_{0.95}] - \mathbb{E}[y_{t,i} \mid y_{t,i} > q_{0.95}] \right]
+$$
 
 Uses the same global threshold as `extreme_freq`.
 
@@ -82,15 +95,18 @@ Uses the same global threshold as `extreme_freq`.
 
 Normalised RMSE of the time-averaged isotropic power spectral density (PSD):
 
-$$\text{spectral\_mae} = \sqrt{ \text{mean}_{k \in \text{valid}} \left[ \frac{\left( \text{PSD}_{\hat{y}}(k) - \text{PSD}_y(k) \right)^2}{\text{PSD}_y(k)^2} \right] }$$
+$$
+M_{\mathrm{spec}} = \sqrt{ \frac{1}{|\mathcal{K}|} \sum_{k \in \mathcal{K}} \frac{\left( \mathrm{PSD}_{\hat{y}}(k) - \mathrm{PSD}_y(k) \right)^2}{\mathrm{PSD}_y(k)^2} }
+$$
+
+where $\mathcal{K}$ is the set of valid wavenumber bins (both ERA5 and prediction PSD finite and positive).
 
 **PSD computation.** For each timestep $t$, the anomaly field (mean removed) is
 Fourier-transformed with `np.fft.fft2`. The 2D power spectrum is binned into $N=40$
 log-spaced radial wavenumber bins. The radially-averaged PSD is the mean power
-per bin. The time average gives $\text{PSD}_y(k)$ and $\text{PSD}_{\hat{y}}(k)$.
+per bin. The time average gives $\mathrm{PSD}_y(k)$ and $\mathrm{PSD}_{\hat{y}}(k)$.
 
-Only bins where both ERA5 and prediction PSD are finite and positive (`valid`) enter
-the score. Wavenumber centers are stored in `k_centers_km_valid` as wavelengths in km
+Wavenumber centers are stored in `k_centers_km_valid` as wavelengths in km
 for plotting. Lower is better; a perfect score is 0.
 
 ---
@@ -105,7 +121,9 @@ to assess whether climate change signals are preserved.
 Spatial mean of the Pearson correlation between GCM and prediction over time,
 computed at each grid point independently:
 
-$$\text{temporal\_corr} = \frac{1}{N} \sum_{i=1}^{N} r\!\left( x_{:,i},\; \hat{y}_{:,i} \right)$$
+$$
+R_{\mathrm{daily}} = \frac{1}{N} \sum_{i=1}^{N} r\!\left( x_{:,i},\ \hat{y}_{:,i} \right)
+$$
 
 where $r(\cdot, \cdot)$ is Pearson's $r$ over the time axis. For free-running GCMs (not
 time-aligned with ERA5), this tests whether the method follows the GCM's daily
@@ -118,16 +136,20 @@ that collapses to monthly climatology).
 
 Same as above but computed on annual-mean fields:
 
-$$\text{temporal\_corr\_annual} = \frac{1}{N} \sum_{i=1}^{N} r\!\left( \bar{x}^{\text{yr}}_{:,i},\; \bar{\hat{y}}^{\text{yr}}_{:,i} \right)$$
+$$
+R_{\mathrm{annual}} = \frac{1}{N} \sum_{i=1}^{N} r\!\left( \bar{x}^{\mathrm{yr}}_{:,i},\ \bar{\hat{y}}^{\mathrm{yr}}_{:,i} \right)
+$$
 
-where $\bar{x}^{\text{yr}}$ denotes annual mean. More informative than daily correlation for
+where $\bar{x}^{\mathrm{yr}}$ denotes annual mean. More informative than daily correlation for
 stochastic methods: tests preservation of interannual variability. Higher is better.
 
 ### 2.3 Annual anomaly bias (`annual_anomaly_bias`)
 
 MAE between annual-mean anomalies of GCM and prediction:
 
-$$\text{annual\_anomaly\_bias} = \frac{1}{Y} \frac{1}{N} \sum_{y,i} \left| \left(\bar{\hat{y}}^{\text{yr}}_{y,i} - \bar{\hat{y}}_i\right) - \left(\bar{x}^{\text{yr}}_{y,i} - \bar{x}_i\right) \right|$$
+$$
+A = \frac{1}{Y} \frac{1}{N} \sum_{y,i} \left| \left(\bar{\hat{y}}^{\mathrm{yr}}_{y,i} - \bar{\hat{y}}_i\right) - \left(\bar{x}^{\mathrm{yr}}_{y,i} - \bar{x}_i\right) \right|
+$$
 
 Measures whether the interannual variability amplitude is preserved. Lower is better.
 
@@ -135,22 +157,30 @@ Measures whether the interannual variability amplitude is preserved. Lower is be
 
 MAE of the lag-1 temporal autocorrelation map:
 
-$$\text{lag1\_autocorr\_mae} = \frac{1}{N} \sum_{i=1}^{N} \left| \rho_1(\hat{y}_{:,i}) - \rho_1(x_{:,i}) \right|$$
+$$
+L = \frac{1}{N} \sum_{i=1}^{N} \left| \rho_1(\hat{y}_{:,i}) - \rho_1(x_{:,i}) \right|
+$$
 
-where $\rho_1(z) = r(z_{1:T-1},\; z_{2:T})$ is the Pearson correlation between
+where $\rho_1(z) = r(z_{1:T-1},\ z_{2:T})$ is the Pearson correlation between
 successive daily values. Tests day-to-day persistence structure. Lower is better.
 
 ### 2.5 Delta change score (`delta_change_score`)
 
 Preservation of the GCM's climate change signal (lower = better):
 
-$$\Delta_{\text{method}}(i) = \frac{\bar{\hat{y}}_{\text{fut}}(i) - \bar{\hat{y}}_{\text{hist}}(i)}{\left|\bar{\hat{y}}_{\text{hist}}(i)\right|} \times 100$$
+$$
+\Delta_{\mathrm{pred}}(i) = \frac{\bar{\hat{y}}_{\mathrm{fut}}(i) - \bar{\hat{y}}_{\mathrm{hist}}(i)}{\left|\bar{\hat{y}}_{\mathrm{hist}}(i)\right|} \times 100
+$$
 
-$$\Delta_{\text{gcm}}(i) = \frac{\bar{x}_{\text{fut}}(i) - \bar{x}_{\text{hist}}(i)}{\left|\bar{x}_{\text{hist}}(i)\right|} \times 100$$
+$$
+\Delta_{\mathrm{gcm}}(i) = \frac{\bar{x}_{\mathrm{fut}}(i) - \bar{x}_{\mathrm{hist}}(i)}{\left|\bar{x}_{\mathrm{hist}}(i)\right|} \times 100
+$$
 
-$$\text{delta\_change\_score} = \text{mean}_{i:\,|\bar{\hat{y}}_{\text{hist}}(i)| > \epsilon} \left| \Delta_{\text{method}}(i) - \Delta_{\text{gcm}}(i) \right|$$
+$$
+D = \underset{i:\ |\bar{\hat{y}}_{\mathrm{hist}}(i)| > \epsilon}{\mathrm{mean}} \left| \Delta_{\mathrm{pred}}(i) - \Delta_{\mathrm{gcm}}(i) \right|
+$$
 
-Grid points where the historical mean is negligible ($|\bar{\hat{y}}_{\text{hist}}| \leq 10^{-8}$) are
+Grid points where the historical mean is negligible ( $|\bar{\hat{y}}_{\mathrm{hist}}| \leq 10^{-8}$ ) are
 excluded. Historical period: 2000–2039; future period: 2060–2100 (defined in
 `evaluate.py`). The score measures how well the method's relative change matches
 the GCM's relative change; a method that merely bias-corrects without preserving
@@ -164,11 +194,17 @@ the GCM trend would score badly here.
 
 MAE of the pointwise temporal Pearson correlation between two variables:
 
-$$C_y(i) = r\!\left( y^{(a)}_{:,i},\; y^{(b)}_{:,i} \right) \qquad \text{(ERA5 pair)}$$
+$$
+C_y(i) = r\!\left( y^{(a)}_{:,i},\ y^{(b)}_{:,i} \right) \qquad \text{(ERA5 pair)}
+$$
 
-$$C_{\hat{y}}(i) = r\!\left( \hat{y}^{(a)}_{:,i},\; \hat{y}^{(b)}_{:,i} \right) \qquad \text{(prediction pair)}$$
+$$
+C_{\hat{y}}(i) = r\!\left( \hat{y}^{(a)}_{:,i},\ \hat{y}^{(b)}_{:,i} \right) \qquad \text{(prediction pair)}
+$$
 
-$$\text{intervar\_corr\_mae} = \frac{1}{N} \sum_{i=1}^{N} \left| C_{\hat{y}}(i) - C_y(i) \right|$$
+$$
+I = \frac{1}{N} \sum_{i=1}^{N} \left| C_{\hat{y}}(i) - C_y(i) \right|
+$$
 
 Computed for variable pairs (`tas`, `pr`), (`tas`, `sfcWind`), (`pr`, `sfcWind`) etc.
 Tests multivariate realism: whether co-occurrence patterns (e.g. warm-dry or
