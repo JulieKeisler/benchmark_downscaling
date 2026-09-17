@@ -26,7 +26,7 @@ from utils import (
     ERA5DownscalingDataset, train_neural_model, neural_predict,
     month_channels,
 )
-from inference_cdft import _cdft_field, _params as _cdft_params
+from inference_cdft import _cdft_field_sliding
 from data_processing import (
     load_era5, load_gcm, bicubic_regrid, align_time, save_predictions,
 )
@@ -49,13 +49,14 @@ def _load_era5_raw(era5_dir, calib_start, calib_end):
 
 
 def _cdft_coarse(gcm_eval, gcm_calib, era5_calib_da, variable, coarse_lat, coarse_lon):
-    """CDF-t at coarse ERA5 grid to remove GCM bias before the U-Net pass."""
-    p       = _cdft_params(variable)
+    """CDF-t at coarse ERA5 grid to remove GCM bias before the U-Net pass.
+
+    Uses 20-10 sliding windows matching the iDownscale inference run."""
     gcm_e_c = bicubic_regrid(gcm_eval,  coarse_lat, coarse_lon)
     gcm_h_c = bicubic_regrid(gcm_calib, coarse_lat, coarse_lon)
     era5_c  = era5_calib_da.interp(lat=coarse_lat, lon=coarse_lon, method="linear")
     era5_c  = era5_c.assign_coords(time=gcm_h_c.time)
-    return _cdft_field(gcm_h_c, era5_c, gcm_e_c, p)
+    return _cdft_field_sliding(gcm_h_c, era5_c, gcm_e_c, variable)
 
 
 def run(
@@ -66,7 +67,7 @@ def run(
     calib_end:   int  = 1999,
     eval_start:  int  = 2000,
     eval_end:    int  = 2100,
-    scenario:    str  = "ssp585",
+    scenario:    str  = "ssp370",
     do_train:    bool = True,
     do_predict:  bool = True,
     epochs:      int  = 30,
@@ -171,7 +172,7 @@ def main():
     p.add_argument("--calib-end",   type=int, default=1999)
     p.add_argument("--eval-start",  type=int, default=2000)
     p.add_argument("--eval-end",    type=int, default=2100)
-    p.add_argument("--scenario",    default="ssp585")
+    p.add_argument("--scenario",    default="ssp370")
     p.add_argument("--epochs",      type=int, default=30)
     p.add_argument("--batch-size",  type=int, default=32)
     p.add_argument("--train",       action="store_true")

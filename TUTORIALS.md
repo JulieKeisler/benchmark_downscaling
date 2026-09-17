@@ -131,7 +131,7 @@ The evaluation pipeline handles metrics and plots automatically.
 
 ### Step 1 — Training (neural methods only)
 
-For stateless methods (bicubic, BCSD, CDF-t, PSM), skip this step.
+For stateless methods (bicubic, BCSD, CDF-t), skip this step.
 For learned methods, create `src/baselines/train_mymethod.py`:
 
 ```python
@@ -148,7 +148,8 @@ torch.save(model.state_dict(), Path(args.out_dir) / "mymethod_best.pth")
 ### Step 2 — Inference
 
 Create `src/baselines/inference_mymethod.py`. Use `inference_bicubic.py` as a
-template for stateless methods, or `inference_cm.py` for checkpoint-based ones.
+template for stateless methods, or `inference_idownscale.py` for
+checkpoint-based (neural) ones.
 The script should:
 - Load ERA5 and GCM via `data_processing.load_era5` / `load_gcm`
 - Run the downscaling logic
@@ -159,9 +160,7 @@ Existing inference scripts for reference:
 - `src/baselines/inference_bicubic.py` — stateless, cubic spline
 - `src/baselines/inference_bcsd.py` — quantile mapping + spatial disaggregation
 - `src/baselines/inference_cdft.py` — CDF-t (per-cell quantile mapping at fine grid)
-- `src/baselines/inference_psm.py` — GNN/sklearn MLP, trains at inference time
 - `src/baselines/inference_cm.py` — consistency model, loads checkpoint
-- `src/baselines/inference_serpentflow.py` — flow matching, loads checkpoint
 
 ### Step 3 — Register in the method registry
 

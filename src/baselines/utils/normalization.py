@@ -1,9 +1,6 @@
-"""Shared normalization — log-transform + min-max to [-1, 1].
+"""Normalization for DL downscaling baselines.
 
-All three DL baselines (iDownscale, CM, SerpentFlow) use the same codec so
-checkpoints and stats files are interchangeable.
-
-pr uses a log-transform before min-max to compress the heavy tail.
+iDownscale / ConsistencyModel: log-transform + min-max to [-1, 1].
 """
 from __future__ import annotations
 
@@ -21,10 +18,12 @@ def _from_log(x: np.ndarray) -> np.ndarray:
     return np.exp(x + np.log(LOG_EPS)) - LOG_EPS
 
 
+# ── Min-max (iDownscale, ConsistencyModel) ────────────────────────────────────
+
 def encode(x: np.ndarray, stats: dict, var: str) -> np.ndarray:
     """Physical → normalised [-1, 1]."""
     if var in LOG_VARS:
-        x = _to_log(np.clip(x, 0.0, None))  # ERA5 pr can be slightly negative (CDS rounding)
+        x = _to_log(np.clip(x, 0.0, None))
     xmin, xmax = stats[var]["xmin"], stats[var]["xmax"]
     return (2.0 * (x - xmin) / (xmax - xmin) - 1.0).astype(np.float32)
 
@@ -51,3 +50,4 @@ def compute_stats(raw: np.ndarray, variables: list[str]) -> dict:
             "log_transform": var in LOG_VARS,
         }
     return stats
+

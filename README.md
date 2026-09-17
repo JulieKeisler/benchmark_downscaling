@@ -1,9 +1,25 @@
-# Downscaling benchmark for climate impact studies
+# Downscaling Benchmark for the Electricity System
 
-A benchmark for evaluating downscaling and bias-correction methods for climate
-impact studies. Reference data is ERA5 daily reanalysis (pseudo-observations,
-1980–2020); model data comes from CMIP6 GCMs (1960–2100). Default domain:
+A benchmark for evaluating downscaling and bias-correction methods for the
+electricity system. Reference data is ERA5 daily reanalysis (pseudo-observations,
+1960–2020); model data comes from CMIP6 GCMs (1960–2100). Default domain:
 France, daily resolution.
+
+We downscale the variables that drive the electric system — temperature
+(demand), 10-m wind and gusts (wind generation), precipitation (hydrology),
+sea-level pressure (weather regimes) — to ~25 km and score each baseline both
+against the observations (accuracy) and against the GCM's future signal
+(fidelity), plus a downstream net-load forecasting task.
+
+- **Code & dashboard:** <https://github.com/JulieKeisler/benchmark_downscaling>
+- **Dashboard:** `streamlit run src/dashboard/dashboard.py`
+
+Compared to existing downscaling/bias-correction benchmark initiatives
+(VALUE — Maraun et al. 2015; CORDEX/EURO-CORDEX — Jacob et al. 2014;
+ISIMIP — Frieler et al. 2017; WeatherBench — Rasp et al. 2020/2024), this
+benchmark is electricity-oriented, transparent (every baseline/metric links to
+its implementation), projection-aware (all methods on the same GCM out to 2100),
+and fully open-source.
 
 ---
 
@@ -15,19 +31,17 @@ src/
     inference_bicubic.py      bicubic regridding baseline
     inference_bcsd.py         BCSD (quantile mapping + delta scaling)
     inference_cdft.py         CDF-t (quantile mapping)
+    inference_dotc.py         DOTC (distribution of trends correction)
     inference_idownscale.py   iDownscale (CDF-t on coarse data + MSE regression UNet, trained on perfect prognosis)
-    inference_serpentflow.py  SerpentFlow (spatial frequency-base alignment+flow-matching UNet, train + infer)
-    inference_cm.py           Consistency model inference
-    train_consistency.py      Consistency model training
+    inference_corrdiff.py     CorrDiff-QM (residual corrective diffusion + QM, two-stage ERA5-only training, stochastic ensemble)
     methods.py                shared physical post-processing helpers
     __init__.py               METHOD_REGISTRY + METHOD_LABELS
     utils/
-      dataset.py              ERA5DownscalingDataset (all three neural modes)
-      training.py             unified train loop (idownscale / serpentflow / cm)
-      inference_utils.py      neural_predict (regression / ODE / stroke guidance)
+      dataset.py              ERA5DownscalingDataset (idownscale / consistency modes)
+      training.py             unified train loop (idownscale / consistency)
+      inference_utils.py      neural_predict (regression / stroke guidance)
       unet.py                 UNet and UNetAttention architectures
       normalization.py        encode / decode, compute_stats, LOG_VARS
-      fourier.py              spectral_lowpass (2D Fourier low-pass filter)
       month.py                month_channels (sin/cos encoding)
       ema.py                  EMA (exponential moving average of weights)
 
@@ -47,7 +61,6 @@ src/
     esgf/
       download_cmip6_esgf.py  ESGF download (psl / sfcWindmax missing from CDS)
     local_data/
-      convert_serpentflow_wind.py  unit conversion for local SF wind data
     wb2_archive/
       download_wb2.py         [archived] WeatherBench2 download
 
@@ -81,7 +94,7 @@ tests/
 
 CONTRIBUTING.md               guide for adding a new method
 TUTORIALS.md                  step-by-step walk-throughs
-requirements.txt              cdsapi, pyyaml, xarray, netcdf4, requests
+requirements.txt              cdsapi, pyyaml, xarray, netcdf4, requests, diffusers, sbck
 ```
 
 ---
@@ -92,10 +105,10 @@ requirements.txt              cdsapi, pyyaml, xarray, netcdf4, requests
 pip install -r requirements.txt
 ```
 
-For neural baselines (iDownscale, SerpentFlow, Consistency Model) also install:
+For neural baselines (iDownscale, CorrDiff-QM, CM) also install:
 
 ```bash
-pip install torch torchdiffeq
+pip install torch diffusers torchdiffeq
 ```
 
 Python 3.10+ recommended.
@@ -116,6 +129,21 @@ python src/data_download/cds/download_cmip6.py
 
 ---
 
+## Baselines
+
+| Method | Code | Type | Reference |
+|--------|------|------|-----------|
+| Bicubic | `src/baselines/inference_bicubic.py` | Inline | Interpolates GCM to ERA5 grid via bicubic splines. No learning. |
+| BCSD | `src/baselines/inference_bcsd.py` | Pre-computed (–pred-dir) | Wood et al. (2002). QM on monthly means + spatial disaggregation. |
+| CDF-t | `src/baselines/inference_cdft.py` | Inline | Michelangeli et al. (2009), via SBCK (`pip install sbck`). Sliding-window CDF-t. |
+| DOTC | `src/baselines/inference_dotc.py` | Pre-computed (–pred-dir) | Vrac et al. (2012). Trend-preserving CDF-t: detrend → QM → re-add trend. |
+| iDownscale | `src/baselines/inference_idownscale.py` | Pre-computed (–pred-dir) | Soares et al. (2024). CERFACS perfect-prognosis U-Net. |
+| CorrDiff-QM | `src/baselines/inference_corrdiff.py` | Pre-computed (–pred-dir) | Mardani et al. (2025). Two-stage residual diffusion (UNet regression + Denoising Diffusion) + quantile mapping, stochastic ensemble. |
+
+Pre-computed methods require their inference script to be run first, then evaluated with `--pred-dir`.
+
+---
+
 ## Running the evaluation
 
 **Step 1 — run inference for a method:**
@@ -131,22 +159,32 @@ python src/baselines/inference_bcsd.py \
     --era5-dir /path/to/era5 --gcm-dir /path/to/cmip6/ipsl_cm6a_lr \
     --out-dir /path/to/results/bcsd
 
-# CDF-t
+# CDF-t (sliding-window, SBCK)
 python src/baselines/inference_cdft.py \
     --era5-dir /path/to/era5 --gcm-dir /path/to/cmip6/ipsl_cm6a_lr \
     --out-dir /path/to/results/cdft
 
-# SerpentFlow (trains then infers, needs GPU)
-python src/baselines/inference_serpentflow.py \
+# DOTC (trend-preserving CDF-t)
+python src/baselines/inference_dotc.py \
     --era5-dir /path/to/era5 --gcm-dir /path/to/cmip6/ipsl_cm6a_lr \
-    --out-dir /path/to/results/serpentflow
+    --out-dir /path/to/results/dotc
+```
 
-# Consistency Model — train first, then infer
-python src/baselines/train_consistency.py \
-    --era5-dir /path/to/era5 --output-dir /path/to/checkpoints
-python src/baselines/inference_cm.py \
+Pre-computed neural methods (iDownscale, CorrDiff-QM, CM) first train on
+ERA5 (`--train`), then infer on the GCM period (`--predict`):
+
+```bash
+# CorrDiff-QM (train on ERA5 1980-1999, predict GCM 2000-2100, 10-member ensemble)
+python src/baselines/inference_corrdiff.py \
     --era5-dir /path/to/era5 --gcm-dir /path/to/cmip6/ipsl_cm6a_lr \
-    --checkpoint-dir /path/to/checkpoints --out-dir /path/to/results/cm
+    --out-dir /path/to/results/corrdiff_qm \
+    --train --predict --n-members 10
+
+# iDownscale
+python src/baselines/inference_idownscale.py \
+    --era5-dir /path/to/era5 --gcm-dir /path/to/cmip6/ipsl_cm6a_lr \
+    --out-dir /path/to/results/idownscale \
+    --train --predict
 ```
 
 **Step 2 — evaluate:**

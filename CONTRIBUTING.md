@@ -6,6 +6,31 @@ add an inference script, and you're done.
 
 ---
 
+## TL;DR — Hackathon-style submission in 4 steps
+
+```bash
+# 1. Implement your method in src/baselines/methods.py
+#    def mymethod_downscale(gcm, obs, variable) -> xr.DataArray
+
+# 2. Register in src/baselines/__init__.py
+#    from .methods import ..., mymethod_downscale
+#    METHOD_REGISTRY = {..., "mymethod": mymethod_downscale}
+#    METHOD_LABELS = {..., "mymethod": "MyMethod"}
+
+# 3. Add inference script (copy inference_bcsd.py)
+#    python src/baselines/inference_mymethod.py \
+#        --era5-dir ... --gcm-dir ... --out-dir results/mymethod
+
+# 4. Evaluate
+#    python src/evaluation/evaluate.py \
+#        --method mymethod --pred-dir results/mymethod \
+#        --config configs/benchmark_local.yaml
+```
+
+That's it. Run `python3 -m pytest tests/ -v` to verify.
+
+---
+
 ## Architecture overview
 
 ```
@@ -76,7 +101,7 @@ same units as the table above.
 
 ## A note on calibration vs evaluation period
 
-Statistical baselines (BCSD, CDF-t, PSM) use the full ERA5 record as **both
+Statistical baselines (BCSD, CDF-t) use the full ERA5 record as **both
 calibration and evaluation data** — there is no train/test split. This is the
 standard practice for climatological bias correction: the calibration period and
 evaluation period are the same historical record. It is not data leakage in the
@@ -208,12 +233,13 @@ python3 -m pytest tests/ -v
 
 ## Adding a multivariate method
 
-Multivariate methods (e.g. consistency model, SerpentFlow) process all
-variables jointly through a neural network. They are handled separately in
-`evaluate.py` rather than through `METHOD_REGISTRY`.
+Multivariate methods process all variables jointly through a neural
+network. They are pre-computed and loaded via `--pred-dir` rather than
+called inline through `METHOD_REGISTRY`.
 
-1. Add the inference logic to a new `inference_<name>.py` (see `inference_cm.py`
-   for the pattern — it loads all 5 channels, pads, applies the network, decodes).
+1. Add the inference logic to a new `inference_<name>.py` (see
+   `inference_idownscale.py` for the pattern — it loads all 5 channels,
+   encodes them, and runs the neural model).
 2. The script must still produce the standard `predictions.pt` format.
 3. Pass `--pred-dir` to `evaluate.py` — no changes to `evaluate.py` needed.
 

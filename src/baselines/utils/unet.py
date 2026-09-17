@@ -1,18 +1,20 @@
-"""U-Net architectures shared by iDownscale, SerpentFlow, and ConsistencyModel.
+"""U-Net architectures shared by iDownscale, ConsistencyModel, and CorrDiff-QM.
 
-Two variants:
+Variants:
     UNet         — plain conv encoder-decoder (fast; good for regression)
     UNetAttention — same backbone + multi-head self-attention at the two lowest
                     spatial resolutions (bottleneck + enc4 level); better for
-                    generative tasks (flow matching, consistency distillation)
+                    generative tasks (consistency distillation)
+    DiffusersUNet — Hess et al. 2025 diffusers UNet2DModel (time via FiLM).
 
-Both handle the 57×65 ERA5 grid internally: padding to 64×80 in forward(),
-cropped back to H_OUT×W_OUT before returning.
+UNet / UNetAttention handle the 57×65 ERA5 grid internally: padding to 64×80
+in forward(), cropped back to H_OUT×W_OUT before returning.
 
 Factory:
     build_unet(arch, in_channels, out_channels, ...)
         arch = "unet"       → UNet
         arch = "unet_attn"  → UNetAttention
+        arch = "diffusers"  → DiffusersUNet
 """
 from __future__ import annotations
 
@@ -102,7 +104,7 @@ class UNetAttention(nn.Module):
     Attention is applied after the bottleneck and enc4 conv blocks.  At those
     depths the spatial size is 4×5 and 8×10 (padded grid), so attention is
     cheap while capturing long-range structure — important for generative
-    objectives (flow matching, consistency distillation).
+    objectives (consistency distillation).
     """
 
     def __init__(self, in_channels: int = 8, out_channels: int = 5,
@@ -199,9 +201,8 @@ def build_unet(
     """Instantiate a UNet variant.
 
     Default arch per baseline:
-        idownscale  → "unet"       (deterministic regression; fast)
-        serpentflow → "unet_attn"  (flow matching; attention helps generation)
-        consistency → "diffusers"  (Hess et al. 2025: UNet2DModel + FiLM)
+        idownscale    → "unet"          (deterministic regression; fast)
+        consistency   → "diffusers"     (Hess et al. 2025: UNet2DModel + FiLM)
     """
     if arch == "unet":
         return UNet(in_channels, out_channels, init_features)
@@ -209,4 +210,4 @@ def build_unet(
         return UNetAttention(in_channels, out_channels, init_features, n_attn_heads)
     if arch == "diffusers":
         return DiffusersUNet(in_channels, out_channels)
-    raise ValueError(f"Unknown arch {arch!r}. Choose 'unet', 'unet_attn', or 'diffusers'.")
+    raise ValueError(f"Unknown arch {arch!r}.")

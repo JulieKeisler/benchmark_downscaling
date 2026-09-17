@@ -43,8 +43,6 @@ METHOD_LABELS = {
     "idownscale":  "iDownscale",
     "consistency": "CM",
     "cm":          "CM",
-    "serpentflow": "SF",
-    "sf":          "SF",
 }
 
 
@@ -104,63 +102,181 @@ def _save(fig, out_path: Path):
     print(f"  saved {out_path.name}")
 
 
-# ── Temporal correlation comparison ──────────────────────────────────────────
+# ── Temporal correlation comparison (2 rows) ───────────────────────────────────
 
 def plot_temporal_corr_comparison(method_data: dict, variable: str, out_path: Path) -> None:
-    """N method panels with shared RdYlGn colorbar."""
+    """2-row figure:
+       Row 0: Annual temporal correlation vs GCM (0-1)
+       Row 1: Bias = 1 - correlation (0 = perfect)
+    Shared colorbar per row."""
     methods = list(method_data.keys())
     N = len(methods)
     ref = next(iter(method_data.values()))
     lat, lon = ref["lat"], ref["lon"]
 
-    all_corr = np.stack([method_data[m]["corr"] for m in methods])
-    vmin = max(-1.0, float(np.nanpercentile(all_corr, 2)))
-    vmax = min( 1.0, float(np.nanpercentile(all_corr, 98)))
-    if vmax - vmin < 0.05:
-        vmid = float(np.nanmean(all_corr))
-        vmin, vmax = max(-1, vmid - 0.1), min(1, vmid + 0.1)
+    # Row 0: correlation [0, 1]
+    corr_vmin, corr_vmax = 0.0, 1.0
 
-    fig, axes, ccrs, cfeature = _geo_panels(1, N, (5 * N, 4.5))
+    # Row 1: bias = 1 - correlation [0, 1] (0 = perfect)
+    bias_vmin, bias_vmax = 0.0, 1.0
+
+    fig, axes, ccrs, cfeature = _geo_panels(2, N, (5 * N, 8.5))
+
+    # Row 0: Correlation
     for col, m in enumerate(methods):
         _pmesh(axes[0, col], lon, lat, method_data[m]["corr"],
-               "RdYlGn", vmin, vmax, f"{m}\nannual corr vs GCM", ccrs, cfeature)
-
-    fig.colorbar(_sm("RdYlGn", vmin, vmax),
+               "RdYlGn", corr_vmin, corr_vmax, f"{m}\nannual corr vs GCM", ccrs, cfeature)
+    fig.colorbar(_sm("RdYlGn", corr_vmin, corr_vmax),
                  ax=axes[0, :].tolist(), shrink=0.8, pad=0.02,
                  label="Pearson r (annual)")
+
+    # Row 1: Bias (1 - corr, 0 = perfect)
+    for col, m in enumerate(methods):
+        bias = 1.0 - method_data[m]["corr"]
+        _pmesh(axes[1, col], lon, lat, bias,
+               "RdBu_r", bias_vmin, bias_vmax, f"{m}\nbias (1 - r)", ccrs, cfeature)
+    fig.colorbar(_sm("RdBu_r", bias_vmin, bias_vmax),
+                 ax=axes[1, :].tolist(), shrink=0.8, pad=0.02,
+                 label="Bias (1 - r, lower = better)")
+
     fig.suptitle(f"Annual temporal correlation vs GCM — {variable}",
                  fontsize=12, fontweight="bold")
     _save(fig, out_path)
 
 
-# ── Autocorrelation comparison ────────────────────────────────────────────────
+# ── 4-row Spatial bias comparison ────────────────────────────────────────────
+
+def plot_spatial_bias_4row(method_data: dict, variable: str, out_path: Path) -> None:
+    """
+    4-row figure per variable:
+      Row 0: Mean (ERA5 + methods)
+      Row 1: Std (ERA5 + methods)
+      Row 2: Mean bias (pred - ERA5)
+      Row 3: Std bias (pred - ERA5)
+    Shared colorbar per row.
+    """
+    import matplotlib.pyplot as plt
+    import cartopy.crs as ccrs_mod
+    methods = list(method_data.keys())
+    N = len(methods)
+    ncols = 1 + N
+    ref = next(iter(method_data.values()))
+    lat, lon = ref["lat"], ref["lon"]
+
+    obs_mean = ref["obs_mean"]
+    obs_std  = ref["obs_std"]
+
+    all_mean_bias = np.stack([method_data[m]["mean_bias"] for m in methods])
+    all_std_bias  = np.stack([method_data[m]["std_bias"]  for m in methods])
+
+    # Compute method mean and std from bias + obs
+    all_pred_mean = np.stack([obs_mean + method_data[m]["mean_bias"] for m in methods])
+    all_pred_std  = np.stack([obs_std  + method_data[m]["std_bias"]  for m in methods])
+
+    vm_mean = max(float(np.nanpercentile(np.abs(all_mean_bias), 98)), 1e-9)
+    vm_std  = max(float(np.nanpercentile(np.abs(all_std_bias),  98)), 1e-9)
+
+    # Range for mean/std values (absolute, not bias)
+    all_mean_vals = np.concatenate([obs_mean.ravel()] + [all_pred_mean[i].ravel() for i in range(N)])
+    all_std_vals  = np.concatenate([obs_std.ravel()]  + [all_pred_std[i].ravel()  for i in range(N)])
+    obs_mean_min, obs_mean_max = float(np.nanmin(all_mean_vals)), float(np.nanmax(all_mean_vals))
+    obs_std_min, obs_std_max   = 0.0, float(np.nanmax(all_std_vals))
+
+    fig, axes, ccrs, cfeature = _geo_panels(4, ncols, (4.2 * ncols, 14.0))
+
+    def _panel(ax, data, cmap, vmin, vmax, title):
+        im = ax.pcolormesh(lon, lat, data, cmap=cmap, vmin=vmin, vmax=vmax,
+                           transform=ccrs_mod.PlateCarree() if ccrs else None)
+        _add_geo(ax, lon, lat, ccrs, cfeature)
+        ax.set_title(title, fontsize=9)
+        return im
+
+    # Row 0: Mean (ERA5 + methods)
+    _panel(axes[0, 0], obs_mean, "viridis", obs_mean_min, obs_mean_max, "ERA5 mean")
+    fig.colorbar(_sm("viridis", obs_mean_min, obs_mean_max),
+                 ax=axes[0, 0], shrink=0.85, pad=0.03, format="%.3g")
+    for col, m in enumerate(methods, start=1):
+        pred_mean = obs_mean + method_data[m]["mean_bias"]
+        _panel(axes[0, col], pred_mean, "viridis", obs_mean_min, obs_mean_max, f"{m}\nmean")
+    fig.colorbar(_sm("viridis", obs_mean_min, obs_mean_max),
+                 ax=axes[0, 1:].tolist(), shrink=0.8, pad=0.02,
+                 label="Mean", format="%.3g")
+
+    # Row 1: Std (ERA5 + methods)
+    _panel(axes[1, 0], obs_std, "plasma", obs_std_min, obs_std_max, "ERA5 std")
+    fig.colorbar(_sm("plasma", obs_std_min, obs_std_max),
+                 ax=axes[1, 0], shrink=0.85, pad=0.03, format="%.3g")
+    for col, m in enumerate(methods, start=1):
+        pred_std = obs_std + method_data[m]["std_bias"]
+        _panel(axes[1, col], pred_std, "plasma", obs_std_min, obs_std_max, f"{m}\nstd")
+    fig.colorbar(_sm("plasma", obs_std_min, obs_std_max),
+                 ax=axes[1, 1:].tolist(), shrink=0.8, pad=0.02,
+                 label="Std", format="%.3g")
+
+    # Row 2: Mean bias
+    for col, m in enumerate(methods, start=1):
+        _panel(axes[2, col], method_data[m]["mean_bias"], "RdBu_r", -vm_mean, vm_mean, f"{m}\nmean bias")
+    axes[2, 0].set_visible(False)
+    fig.colorbar(_sm("RdBu_r", -vm_mean, vm_mean),
+                 ax=axes[2, 1:].tolist(), shrink=0.8, pad=0.02,
+                 label="Mean bias (pred − ERA5)", format="%.3g")
+
+    # Row 3: Std bias
+    for col, m in enumerate(methods, start=1):
+        _panel(axes[3, col], method_data[m]["std_bias"], "PuOr", -vm_std, vm_std, f"{m}\nstd bias")
+    axes[3, 0].set_visible(False)
+    fig.colorbar(_sm("PuOr", -vm_std, vm_std),
+                 ax=axes[3, 1:].tolist(), shrink=0.8, pad=0.02,
+                 label="Std bias (pred − ERA5)", format="%.3g")
+
+    fig.suptitle(f"Spatial bias (4-row) — {variable}", fontsize=12, fontweight="bold")
+    _save(fig, out_path)
+
+
+# ── Autocorrelation comparison (2 rows) ────────────────────────────────────────
 
 def plot_autocorr_all(method_data: dict, variable: str, out_path: Path) -> None:
-    """GCM autocorr (once) + all method diff panels with shared colorbar."""
+    """2-row figure:
+       Row 0: GCM autocorr + method autocorr
+       Row 1: Method bias (pred - GCM)
+    Shared colorbar per row."""
+    import matplotlib.pyplot as plt
     methods = list(method_data.keys())
     N = len(methods)
     ref = next(iter(method_data.values()))
     lat, lon = ref["lat"], ref["lon"]
     ac_gcm = ref["ac_gcm"]
 
+    all_pred = np.stack([method_data[m]["ac_pred"] for m in methods])
+    vm_pred = max(float(np.nanpercentile(np.abs(all_pred), 98)), 1e-9)
+
     all_diff = np.stack([method_data[m]["ac_pred"] - method_data[m]["ac_gcm"] for m in methods])
     vm_diff = max(float(np.nanpercentile(np.abs(all_diff), 98)), 1e-9)
 
     ncols = 1 + N
-    fig, axes, ccrs, cfeature = _geo_panels(1, ncols, (4.5 * ncols, 4.5))
+    fig, axes, ccrs, cfeature = _geo_panels(2, ncols, (4.5 * ncols, 9.0))
 
+    # Row 0: GCM autocorr + method autocorr
     _pmesh(axes[0, 0], lon, lat, ac_gcm, "RdYlGn", -1, 1, "GCM lag-1 autocorr", ccrs, cfeature)
     fig.colorbar(_sm("RdYlGn", -1, 1), ax=axes[0, 0], shrink=0.85, pad=0.03,
                  label="lag-1 autocorr")
+    for col, m in enumerate(methods, start=1):
+        _pmesh(axes[0, col], lon, lat, method_data[m]["ac_pred"], "RdYlGn", -vm_pred, vm_pred,
+               f"{m}\nlag-1 autocorr", ccrs, cfeature)
+    fig.colorbar(_sm("RdYlGn", -vm_pred, vm_pred),
+                 ax=axes[0, 1:].tolist(), shrink=0.8, pad=0.02,
+                 label="lag-1 autocorr")
 
+    # Row 1: Bias (pred - GCM)
+    axes[1, 0].set_visible(False)
     for col, m in enumerate(methods, start=1):
         diff = method_data[m]["ac_pred"] - method_data[m]["ac_gcm"]
-        _pmesh(axes[0, col], lon, lat, diff, "RdBu_r", -vm_diff, vm_diff,
-               f"{m}\ndiff (pred − GCM)", ccrs, cfeature)
-
+        _pmesh(axes[1, col], lon, lat, diff, "RdBu_r", -vm_diff, vm_diff,
+               f"{m}\nbias vs GCM", ccrs, cfeature)
     fig.colorbar(_sm("RdBu_r", -vm_diff, vm_diff),
-                 ax=axes[0, 1:].tolist(), shrink=0.8, pad=0.02,
+                 ax=axes[1, 1:].tolist(), shrink=0.8, pad=0.02,
                  label="Δ lag-1 autocorr (pred − GCM)")
+
     fig.suptitle(f"Lag-1 autocorrelation — {variable}", fontsize=12, fontweight="bold")
     _save(fig, out_path)
 
@@ -309,12 +425,13 @@ def main(argv=None):
     out_dir = Path(args.out_dir) if args.out_dir else results_dir / "comparison"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    EXCLUDED_METHODS = {"automated_degradation"}
     if args.methods:
         method_dirs = {m: results_dir / m for m in args.methods}
     else:
         method_dirs = {
             d.name: d for d in sorted(results_dir.iterdir())
-            if d.is_dir() and d.name != "comparison"
+            if d.is_dir() and d.name != "comparison" and d.name not in EXCLUDED_METHODS
         }
 
     if not method_dirs:
@@ -334,7 +451,7 @@ def main(argv=None):
             method_data[METHOD_LABELS.get(name, name)] = data
             print(f"  {name}: loaded")
         if method_data:
-            plot_spatial_comparison(method_data, variable, out_dir / f"spatial_{variable}.png")
+            plot_spatial_bias_4row(method_data, variable, out_dir / f"spatial_{variable}.png")
 
     # ── Temporal correlation ──────────────────────────────────────────────────
     print("\n=== Temporal correlation ===")

@@ -30,8 +30,8 @@ variables:
 area: [55.0, -6.0, 41.0, 10.0]   # France
 
 # ── Scenario ───────────────────────────────────────────────────────────────────
-# Used for CMIP6 files whose period spans 2015+.  Currently only ssp585.
-scenario: ssp585
+# Used for CMIP6 files whose period spans 2015+.
+scenario: ssp370
 
 # ── Data paths ─────────────────────────────────────────────────────────────────
 # era5_dir: directory containing  {variable}_{year}.nc  files.

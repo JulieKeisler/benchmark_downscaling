@@ -1,11 +1,7 @@
-"""Unified ERA5 dataset for all three neural baselines.
+"""Unified ERA5 dataset for the neural baselines.
 
 mode="idownscale"
     x_in  = coarsened ERA5 (stride× subsample + bicubic upsample)
-    x_target = full ERA5
-
-mode="serpentflow"
-    x_in  = spectral low-pass of ERA5 at r_cut (shared GCM structure)
     x_target = full ERA5
 
 mode="consistency"
@@ -19,12 +15,10 @@ import numpy as np
 import torch
 import torch.nn.functional as TF
 from torch.utils.data import Dataset
-
-from .fourier import spectral_lowpass
 from .month import month_channels
 from .normalization import encode
 
-VALID_MODES = ("idownscale", "serpentflow", "consistency")
+VALID_MODES = ("idownscale", "consistency")
 
 
 def _coarsen_upsample(data: np.ndarray, stride: int) -> np.ndarray:
@@ -45,23 +39,23 @@ class ERA5DownscalingDataset(Dataset):
         months:    [T] — calendar months (1–12).
         stats:     Per-variable dict from ``normalization.compute_stats``.
         variables: Ordered list of variable names.
-        mode:      One of "idownscale", "serpentflow", "consistency".
-        r_cut:     Fourier cutoff radius (used for mode="serpentflow").
+        mode:      One of "idownscale", "consistency".
         stride:    Coarsening stride   (used for mode="idownscale").
     """
 
     def __init__(
         self,
-        raw:       np.ndarray,
-        months:    np.ndarray,
-        stats:     dict,
-        variables: list[str],
-        mode:      str = "serpentflow",
-        r_cut:     int = 7,
-        stride:    int = 4,
+        raw:          np.ndarray,
+        months:       np.ndarray,
+        stats:        dict,
+        variables:    list[str],
+        mode:         str   = "idownscale",
+        stride:       int   = 4,
     ):
         if mode not in VALID_MODES:
             raise ValueError(f"mode must be one of {VALID_MODES}, got {mode!r}")
+
+        self.mode   = mode
 
         T, C, H, W = raw.shape
         data_norm = np.empty((T, C, H, W), dtype=np.float32)
@@ -70,12 +64,10 @@ class ERA5DownscalingDataset(Dataset):
 
         if mode == "idownscale":
             x_in = _coarsen_upsample(data_norm, stride)
-        elif mode == "serpentflow":
-            x_in = spectral_lowpass(data_norm, r_cut)
         else:   # consistency — noise added by training loop
             x_in = data_norm.copy()
 
-        self.x_in     = torch.from_numpy(x_in)
+        self.x_in     = torch.from_numpy(x_in.astype(np.float32))
         self.x_target = torch.from_numpy(data_norm)
         self.month_ch = torch.from_numpy(month_channels(months, (T, H, W)))
 
@@ -83,8 +75,10 @@ class ERA5DownscalingDataset(Dataset):
         return len(self.x_target)
 
     def __getitem__(self, i: int) -> dict[str, torch.Tensor]:
-        return {
-            "x_in":     self.x_in[i],      # [N_VARS, H, W]
-            "x_target": self.x_target[i],  # [N_VARS, H, W]
-            "month_ch": self.month_ch[i],  # [2, H, W]
+        batch = {
+            "x_in":     self.x_in[i],       # [N_VARS, H, W]
+            "x_target": self.x_target[i],   # [N_VARS, H, W]
+            "month_ch": self.month_ch[i],   # [2, H, W]
         }
+        return batch
+

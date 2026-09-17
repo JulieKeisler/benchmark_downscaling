@@ -28,7 +28,7 @@ from data_processing import (
 
 def run(era5_dir: Path, gcm_dir: Path, out_dir: Path,
         variables: list[str], eval_start: int, eval_end: int,
-        scenario: str = "ssp585") -> None:
+        scenario: str = "ssp370") -> None:
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -63,7 +63,7 @@ def main():
     p.add_argument("--variables",   nargs="+", default=DEFAULT_VARIABLES)
     p.add_argument("--eval-start",  type=int, default=2000)
     p.add_argument("--eval-end",    type=int, default=2100)
-    p.add_argument("--scenario",    default="ssp585")
+    p.add_argument("--scenario",    default="ssp370")
     args = p.parse_args()
     run(Path(args.era5_dir), Path(args.gcm_dir), Path(args.out_dir),
         args.variables, args.eval_start, args.eval_end, args.scenario)

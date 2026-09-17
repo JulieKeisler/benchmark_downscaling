@@ -150,11 +150,7 @@ def plot_temporal_corr(gcm: xr.DataArray, pred: xr.DataArray, variable: str,
         corr=corr, lat=lat, lon=lon,
     )
 
-    vmin = max(-1.0, float(np.nanpercentile(corr, 2)))
-    vmax = min( 1.0, float(np.nanpercentile(corr, 98)))
-    if vmax - vmin < 0.05:
-        vmid = float(np.nanmean(corr))
-        vmin, vmax = max(-1, vmid - 0.1), min(1, vmid + 0.1)
+    vmin, vmax = 0.0, 1.0
 
     proj = ccrs_mod.PlateCarree() if ccrs is not None else None
     fig, ax = plt.subplots(figsize=(7, 5),
@@ -173,7 +169,7 @@ def plot_temporal_corr(gcm: xr.DataArray, pred: xr.DataArray, variable: str,
 
 def plot_autocorr_comparison(gcm: xr.DataArray, pred: xr.DataArray, variable: str,
                              method: str, plot_dir: Path) -> None:
-    """Save autocorr data for comparison, and per-method diff map (1 panel)."""
+    """3-panel map: GCM reference autocorr | method autocorr | bias (pred - GCM)."""
     import matplotlib.pyplot as plt
     ccrs, cfeature = _try_cartopy()
     import cartopy.crs as ccrs_mod
@@ -191,14 +187,24 @@ def plot_autocorr_comparison(gcm: xr.DataArray, pred: xr.DataArray, variable: st
 
     vm = max(float(np.nanpercentile(np.abs(diff), 98)), 1e-9)
     proj = ccrs_mod.PlateCarree() if ccrs is not None else None
-    fig, ax = plt.subplots(figsize=(7, 5),
-                           subplot_kw={"projection": proj} if proj else {},
-                           layout="constrained")
-    im = ax.pcolormesh(lon, lat, diff, cmap="RdBu_r", vmin=-vm, vmax=vm,
-                       transform=ccrs_mod.PlateCarree() if ccrs else None)
-    _add_geo(ax, lon, lat, ccrs, cfeature)
-    plt.colorbar(im, ax=ax, shrink=0.8, label="Δ lag-1 autocorr (pred − GCM)")
-    ax.set_title(f"Autocorr diff — {variable} — {method}", fontsize=11)
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5),
+                             subplot_kw={"projection": proj} if proj else {},
+                             squeeze=False, layout="constrained")
+    tr = ccrs_mod.PlateCarree() if ccrs else None
+
+    for ax, data, title, cmap, vmin, vmax in [
+        (axes[0, 0], ac_gcm,  f"GCM lag-1 autocorr", "RdYlGn", -1, 1),
+        (axes[0, 1], ac_pred, f"{method} lag-1 autocorr", "RdYlGn", -1, 1),
+        (axes[0, 2], diff,    f"{method} bias (pred−GCM)", "RdBu_r", -vm, vm),
+    ]:
+        im = ax.pcolormesh(lon, lat, data, cmap=cmap, vmin=vmin, vmax=vmax,
+                           transform=tr)
+        _add_geo(ax, lon, lat, ccrs, cfeature)
+        ax.set_title(title, fontsize=9)
+        plt.colorbar(im, ax=ax, shrink=0.8)
+
+    fig.suptitle(f"Lag-1 autocorrelation — {variable} — {method}",
+                 fontsize=11, fontweight="bold")
     out = plot_dir / f"autocorr_{variable}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
@@ -210,7 +216,7 @@ def plot_intervar_corr(obs1: xr.DataArray, obs2: xr.DataArray,
                        var1: str, var2: str,
                        method: str, plot_dir: Path,
                        diff_vmax: float = 0.5) -> None:
-    """Save intervar corr data; per-method PNG shows pred correlation only."""
+    """1-panel map: method inter-var correlation."""
     import matplotlib.pyplot as plt
     ccrs, cfeature = _try_cartopy()
     import cartopy.crs as ccrs_mod
@@ -238,7 +244,20 @@ def plot_intervar_corr(obs1: xr.DataArray, obs2: xr.DataArray,
     out = plot_dir / f"intervar_corr_{var1}_{var2}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"  saved intervar_corr_{var1}_{var2}.png")
+
+    # Save ERA5 reference map as well for comparison basis
+    fig_era5, ax_era5 = plt.subplots(figsize=(7, 5),
+                                   subplot_kw={"projection": proj} if proj else {},
+                                   layout="constrained")
+    im_era5 = ax_era5.pcolormesh(lon, lat, era5_corr, cmap="RdBu_r", vmin=-1, vmax=1,
+                                 transform=ccrs_mod.PlateCarree() if ccrs else None)
+    _add_geo(ax_era5, lon, lat, ccrs, cfeature)
+    plt.colorbar(im_era5, ax=ax_era5, shrink=0.8, label="Pearson r")
+    ax_era5.set_title(f"ERA5 reference r({var1},{var2})", fontsize=11)
+    out_era5 = plot_dir / f"intervar_corr_{var1}_{var2}_era5.png"
+    plt.savefig(out_era5, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  saved intervar_corr_{var1}_{var2}.png and _era5.png")
 
 
 def plot_delta_map(

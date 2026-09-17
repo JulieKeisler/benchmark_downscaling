@@ -8,6 +8,11 @@ bcsd: {}      # stateless — fits distribution per month/cell at inference time
 
 cdft: {}      # stateless — bicubic upsample then per-cell monthly QM at ERA5 resolution
 
+dotc:
+  win_size: 20       # sliding window size for temporal trend estimation (years)
+  step: 10           # sliding window step (years)
+  trim: 5            # sliding window trim margin (years)
+
 idownscale:   # CERFACS U-Net perfect-prognosis downscaling (Soares et al. 2024)
   epochs: 30       # U-Net training epochs
   batch_size: 32   # training batch size
@@ -19,10 +24,10 @@ consistency:
   n_members: 1       # stochastic draws to average (trade speed for diversity)
   batch_size: 16     # inference batch size; reduce if GPU OOM
 
-serpentflow:
-  # SerpentFlow is NOT self-contained: it requires the SF source tree at import
-  # time (from src.inference import ...).  Use inference_serpentflow.py only
-  # from within the SF repository environment, not from this benchmark tree.
-  # Output format also differs from other methods — see serpentflow_load_predictions()
-  # in evaluate.py.
-  r_cut: 1           # Fourier low-pass radius used during SF data prep
+corrdiff_qm:
+  n_members: 10      # stochastic residual-diffusion draws averaged per field
+  sample_steps: 50   # strided DDPM reverse steps (few-step sampling)
+  epochs: 5          # training epochs on ERA5 (both stages)
+  batch_size: 16     # training batch size
+  # Inference: QM maps GCM coarse predictor → ERA5 coarse predictor (per cell,
+  # per calendar month), calibrated on the historical holdout only.

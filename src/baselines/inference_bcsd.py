@@ -29,6 +29,7 @@ from data_processing import (
     DEFAULT_VARIABLES, load_era5, load_gcm, align_time, save_predictions,
 )
 from methods import _qmap_1d
+from inference_cdft import _sliding_windows
 
 def bcsd_downscale(gcm: xr.DataArray, obs: xr.DataArray,
                    variable: str,
@@ -99,7 +100,7 @@ def bcsd_downscale(gcm: xr.DataArray, obs: xr.DataArray,
 
     if variable == "pr":
         denom = np.where(np.abs(gcm_mon_d) > 1e-8, gcm_mon_d, 1e-8)
-        scale = np.clip(bc_mon_d / denom, 0.0, 10.0)
+        scale = np.clip(bc_mon_d / denom, 0.0, 5.0)
         bc_daily[valid] = gcm_np[valid] * scale
         bc_daily = np.clip(bc_daily, 0.0, None)
     else:
@@ -112,9 +113,6 @@ def bcsd_downscale(gcm: xr.DataArray, obs: xr.DataArray,
                         kwargs={"fill_value": "extrapolate"})
     bc_fine = bc_fine.interp(lon=obs.lon, method="cubic",
                               kwargs={"fill_value": "extrapolate"})
-    if bc_fine.sizes["time"] == obs.sizes["time"]:
-        bc_fine = bc_fine.assign_coords(time=obs.time)
-
     # Step 7: Fine-scale ERA5 spatial detail from ERA5 calib climatology
     obs_clim = obs_cal.groupby("time.month").mean("time")           # [12, lat_fine, lon_fine]
     obs_clim_coarse = obs_coarse.groupby("time.month").mean("time") # [12, lat_gcm, lon_gcm]
@@ -128,7 +126,7 @@ def bcsd_downscale(gcm: xr.DataArray, obs: xr.DataArray,
     if variable == "pr":
         denom = np.where(obs_clim_coarse_fine.values > 1e-6,
                          obs_clim_coarse_fine.values, 1e-6)
-        ratio = np.clip(obs_clim.values / denom, 0.1, 10.0)
+        ratio = np.clip(obs_clim.values / denom, 0.0, 5.0)
         pred_np *= ratio[month_idx]
         pred_np = np.clip(pred_np, 0.0, None)
     else:
@@ -136,6 +134,7 @@ def bcsd_downscale(gcm: xr.DataArray, obs: xr.DataArray,
         pred_np += detail[month_idx]
 
     return xr.DataArray(pred_np, coords=bc_fine.coords, dims=bc_fine.dims)
+
 
 def run(
     era5_dir: Path,
@@ -146,38 +145,47 @@ def run(
     calib_end:   int,
     eval_start:  int,
     eval_end:    int,
-    scenario: str = "ssp585",
+    scenario: str = "ssp370",
+    win_size: int = 20, step: int = 10, trim: int = 5,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    separate = (calib_start, calib_end) != (eval_start, eval_end)
-    print(f"Calib: {calib_start}–{calib_end}  |  Eval: {eval_start}–{eval_end}", flush=True)
+    print(f"Calib: {calib_start}–{calib_end}  |  Eval: {eval_start}–{eval_end}"
+          f"  |  Window: {win_size}yr step {step}yr trim {trim}yr", flush=True)
 
     era5_cal, gcm_cal, gcm_eval = {}, {}, {}
     for var in variables:
         print(f"  Loading {var} ...", flush=True)
-        if separate:
-            era5_cal[var] = load_era5(era5_dir, var, calib_start, calib_end)
-            gcm_cal[var]  = load_gcm(gcm_dir, var, calib_start, calib_end, "historical")
+        era5_cal[var] = load_era5(era5_dir, var, calib_start, calib_end)
+        gcm_cal[var]  = load_gcm(gcm_dir, var, calib_start, calib_end, "historical")
         gcm_eval[var] = load_gcm(gcm_dir, var, eval_start, eval_end, scenario)
 
-    if separate:
-        all_cal = {}
-        for var in variables:
-            all_cal[f"era5_{var}"] = era5_cal[var]
-            all_cal[f"gcm_{var}"]  = gcm_cal[var]
-        aligned_cal = align_time(all_cal)
-        era5_cal = {v: aligned_cal[f"era5_{v}"] for v in variables}
-        gcm_cal  = {v: aligned_cal[f"gcm_{v}"]  for v in variables}
-
-    ref_da = None
-    arrays = []
+    all_cal = {}
     for var in variables:
-        print(f"  BCSD {var} ...", flush=True)
-        gcm_c = gcm_cal.get(var)
-        obs_c = era5_cal.get(var)
-        # obs (for spatial disaggregation) = era5 calib; gcm eval extends to eval_end
-        obs   = obs_c if obs_c is not None else load_era5(era5_dir, var, eval_start, eval_end)
-        pred = bcsd_downscale(gcm_eval[var], obs, var, gcm_calib=gcm_c, obs_calib=obs_c)
+        all_cal[f"era5_{var}"] = era5_cal[var]
+        all_cal[f"gcm_{var}"]  = gcm_cal[var]
+    aligned_cal = align_time(all_cal)
+    era5_cal = {v: aligned_cal[f"era5_{v}"] for v in variables}
+    gcm_cal  = {v: aligned_cal[f"gcm_{v}"]  for v in variables}
+
+    windows = _sliding_windows(eval_start, eval_end, win_size, step, trim)
+    ref_da  = None
+    arrays  = []
+    for var in variables:
+        print(f"  BCSD {var} ({len(windows)} windows) ...", flush=True)
+        gcm_c = gcm_cal[var]
+        obs_c = era5_cal[var]
+
+        pieces = []
+        for win_start, win_end, keep_start, keep_end in windows:
+            yr = gcm_eval[var].time.dt.year.values
+            gcm_win  = gcm_eval[var].isel(time=(yr >= win_start) & (yr <= win_end))
+            if gcm_win.sizes["time"] == 0:
+                continue
+            pred_win = bcsd_downscale(gcm_win, obs_c, var, gcm_calib=gcm_c, obs_calib=obs_c)
+            yr_p     = pred_win.time.dt.year.values
+            pieces.append(pred_win.isel(time=(yr_p >= keep_start) & (yr_p <= keep_end)))
+
+        pred = xr.concat(pieces, dim="time").sortby("time")
         if ref_da is None:
             ref_da = pred
         arrays.append(torch.tensor(pred.values, dtype=torch.float32))
@@ -196,7 +204,10 @@ def main():
     p.add_argument("--calib-end",   type=int, default=1999)
     p.add_argument("--eval-start",  type=int, default=2000)
     p.add_argument("--eval-end",    type=int, default=2100)
-    p.add_argument("--scenario",    default="ssp585")
+    p.add_argument("--scenario",    default="ssp370")
+    p.add_argument("--win-size",    type=int, default=20)
+    p.add_argument("--step",        type=int, default=10)
+    p.add_argument("--trim",        type=int, default=5)
     args = p.parse_args()
     run(
         Path(args.era5_dir), Path(args.gcm_dir), Path(args.out_dir),
@@ -204,6 +215,7 @@ def main():
         args.calib_start, args.calib_end,
         args.eval_start,  args.eval_end,
         args.scenario,
+        args.win_size, args.step, args.trim,
     )
 
 

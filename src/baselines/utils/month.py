@@ -1,4 +1,4 @@
-"""Month covariate — shared by iDownscale, SerpentFlow, and ConsistencyModel."""
+"""Month covariate — shared by iDownscale and ConsistencyModel."""
 from __future__ import annotations
 
 import numpy as np

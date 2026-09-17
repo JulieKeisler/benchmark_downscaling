@@ -23,7 +23,7 @@ Requirements:
 Usage:
     python scripts/download_era5.py
     python scripts/download_era5.py --variables rsds
-    python scripts/download_era5.py --variables rsds --years 1979 2022
+    python scripts/download_era5.py --variables rsds --years 1960 2022
     python scripts/download_era5.py --config configs/data/era5.yaml --jobs 4
 """
 
@@ -212,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
                              "Wind (sfcWind/sfcWindmax) is driven by hourly_wind config.")
     parser.add_argument("--years", nargs=2, type=int, default=None,
                         metavar=("START", "END"),
-                        help="Year range, e.g. --years 1979 2022 (default: from config)")
+                        help="Year range, e.g. --years 1960 2022 (default: from config)")
     parser.add_argument("--output-dir", default=None,
                         help="Output directory (default: from config)")
     parser.add_argument("--jobs", type=int, default=4,

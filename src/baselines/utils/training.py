@@ -1,9 +1,8 @@
-"""Unified training entry-point for all three neural baselines.
+"""Unified training entry-point for the neural baselines.
 
 Shared outer loop; mode-specific inner step:
 
     train_neural_model(mode="idownscale",  ...)  → MSE regression
-    train_neural_model(mode="serpentflow", ...)  → conditional flow matching
     train_score_model(...)                        → EDM denoising score matching
     train_neural_model(mode="consistency", ..., score_model=...)
                                                   → consistency distillation (CD)
@@ -48,12 +47,11 @@ _LOG_RATIO  = math.log(T_MAX / T_MIN)   # ≈ 10.6
 def _n_in(mode: str, n_vars: int) -> int:
     """Number of input channels for each mode.
 
-    idownscale:  [x_in | month]       → N_VARS + 2
-    serpentflow: [x_t  | month | t]   → N_VARS + 3  (t as spatial channel)
-    consistency: [x_t  | month]       → N_VARS + 2  (t via UNet2DModel timestep)
-    score:       [x_noisy | month]    → N_VARS + 2  (σ via UNet2DModel timestep)
+    idownscale:      [x_in | month]       → N_VARS + 2
+    consistency:     [x_t  | month]       → N_VARS + 2  (t via UNet2DModel timestep)
+    score:           [x_noisy | month]    → N_VARS + 2  (σ via UNet2DModel timestep)
     """
-    return n_vars + 3 if mode == "serpentflow" else n_vars + 2
+    return n_vars + 2
 
 
 def _t_emb(t: torch.Tensor) -> torch.Tensor:
@@ -141,20 +139,6 @@ def _step_regression(model, batch, device):
     return F.mse_loss(model(torch.cat([x_in, mc], dim=1)), x_target)
 
 
-def _step_flow(model, batch, device, hf_noise_std: float = 0.1):
-    x_lp = batch["x_in"].to(device)
-    x1   = batch["x_target"].to(device)
-    mc   = batch["month_ch"].to(device)
-    B, _, H, W = x_lp.shape
-    x0   = x_lp + torch.randn_like(x_lp) * hf_noise_std
-    sigma = (torch.randn(B, device=device) * P_STD + P_MEAN).exp()
-    t     = (1.0 / (1.0 + sigma)).clamp(1e-4, 1.0)
-    t4   = t[:, None, None, None]
-    x_t  = (1 - t4) * x0 + t4 * x1
-    t_ch = t4.expand(B, 1, H, W)
-    return F.mse_loss(model(torch.cat([x_t, mc, t_ch], dim=1)), x1 - x0)
-
-
 def _step_score(model, batch, device):
     """EDM denoising score matching (Karras et al. 2022)."""
     y  = batch["x_target"].to(device)
@@ -199,17 +183,20 @@ def _step_consistency_distill(
 # ── Public training entry-points ──────────────────────────────────────────────
 
 def _run_epoch(
-    mode, model, loader, opt, ema, model_ema,
+    mode, model, loader, opt, sched, ema, model_ema,
     device, n_vars, global_step, total_steps,
-    hf_noise_std, score_net, dataset_len,
+    score_net, dataset_len,
+    accum_iter=1,
 ):
     model.train()
     total = 0.0
-    for batch in loader:
+    opt.zero_grad()
+    for i, batch in enumerate(loader):
+        is_last     = (i + 1 == len(loader))
+        should_step = ((i + 1) % accum_iter == 0) or is_last
+
         if mode == "idownscale":
             loss = _step_regression(model, batch, device)
-        elif mode == "serpentflow":
-            loss = _step_flow(model, batch, device, hf_noise_std=hf_noise_std)
         elif mode == "score":
             loss = _step_score(model, batch, device)
         else:   # consistency
@@ -220,21 +207,26 @@ def _run_epoch(
 
         loss_val = loss.item()
         if not math.isfinite(loss_val):
-            global_step += 1
+            if should_step:
+                opt.zero_grad()
+                global_step += 1
             continue
 
-        opt.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        opt.step()
-        global_step += 1
-
-        if ema is not None:
-            ema.update()
-        if model_ema is not None:
-            _ema_update_params(model, model_ema, _current_bins(global_step, total_steps))
-
+        (loss / accum_iter).backward()
         total += loss_val * batch["x_target"].shape[0]
+
+        if should_step:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+            opt.zero_grad()
+            if sched is not None:
+                sched.step()
+            global_step += 1
+
+            if ema is not None:
+                ema.update()
+            if model_ema is not None:
+                _ema_update_params(model, model_ema, _current_bins(global_step, total_steps))
 
     return total / dataset_len, global_step
 
@@ -269,9 +261,9 @@ def train_score_model(
     for epoch in range(1, n_epochs + 1):
         t0 = time.time()
         avg, global_step = _run_epoch(
-            "score", model, loader, opt, ema, None,
+            "score", model, loader, opt, None, ema, None,
             device, n_vars, global_step, total_steps,
-            0.0, None, len(dataset),
+            None, len(dataset),
         )
         sched.step()
         if avg < best_loss:
@@ -297,13 +289,14 @@ def train_neural_model(
     lr:            float = 2e-4,
     device:        str | torch.device = "cuda",
     ema_decay:     float = 0.999,
-    hf_noise_std:  float = 0.1,
     score_model:   nn.Module | None = None,
+    accum_iter:    int   = 1,
 ) -> nn.Module:
-    """Train a neural baseline (idownscale / serpentflow / consistency).
+    """Train a neural baseline (idownscale / consistency).
 
     For mode="consistency": score_model must be a pre-trained score network.
     The consistency model is trained via distillation (CD), not self-supervised CT.
+    accum_iter: gradient accumulation steps (effective_bs = batch_size * accum_iter).
     """
     if mode == "consistency" and score_model is None:
         raise ValueError("mode='consistency' requires score_model (pre-trained score network)")
@@ -311,33 +304,42 @@ def train_neural_model(
     device    = torch.device(device)
     n_vars    = dataset.x_target.shape[1]
     model     = model.to(device)
-    use_ema   = mode in ("serpentflow", "consistency")
+    use_ema   = mode == "consistency"
     model_ema = copy.deepcopy(model).to(device) if mode == "consistency" else None
     ema       = EMA(model, decay=ema_decay)     if use_ema else None
     if score_model is not None:
         score_model = score_model.to(device).eval()
 
-    opt   = torch.optim.AdamW(model.parameters(), lr=lr)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=n_epochs)
-    num_workers = min(4, torch.multiprocessing.cpu_count() // 2)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95))
+    num_workers = min(8, torch.multiprocessing.cpu_count() // 2)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
                         num_workers=num_workers, pin_memory=True,
                         persistent_workers=(num_workers > 0))
     n_params    = sum(p.numel() for p in model.parameters())
-    total_steps = len(loader) * n_epochs
+    # LR schedule counts optimizer steps, not micro-batch steps
+    total_steps  = math.ceil(len(loader) / accum_iter) * n_epochs
+    warmup_steps = max(1, int(0.05 * total_steps))
+    def _lr_lambda(step):
+        if step < warmup_steps:
+            return step / warmup_steps
+        progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, _lr_lambda)
+    eff_bs = batch_size * accum_iter
     print(f"  [{mode}] {n_params/1e6:.1f}M params  "
-          f"{len(dataset)} samples  {n_epochs} epochs  ({device})", flush=True)
+          f"{len(dataset)} samples  {n_epochs} epochs  "
+          f"bs={batch_size}×{accum_iter}={eff_bs}  ({device})", flush=True)
 
     best_loss   = math.inf
     global_step = 0
     for epoch in range(1, n_epochs + 1):
         t0 = time.time()
         avg, global_step = _run_epoch(
-            mode, model, loader, opt, ema, model_ema,
+            mode, model, loader, opt, sched, ema, model_ema,
             device, n_vars, global_step, total_steps,
-            hf_noise_std, score_model, len(dataset),
+            score_model, len(dataset),
+            accum_iter=accum_iter,
         )
-        sched.step()
         if avg < best_loss:
             best_loss = avg
             _save_ckpt(model, ema, ckpt_path)

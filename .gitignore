@@ -6,9 +6,16 @@ cleps/
 papers/
 .claude
 CLAUDE.md
+AGENTS.md
+RML_FM.md
+scripts/
+.rtk
 
 # python
 __pycache__/
 *.egg-info/
 .venv/
 .pytest_cache/
+
+# local session/opencode state
+session_downscalingbenchmark.json

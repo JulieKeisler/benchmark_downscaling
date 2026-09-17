@@ -4,22 +4,20 @@
 Outputs (all saved to --out-dir):
   ERA5_train.pt      [T_train, C, H, W]  float32, physical units
   GCM_eval.pt        [T_eval,  C, H, W]  float32, physical units, on ERA5 grid
-  norm_stats.json    ERA5 channel-wise mean/std (for SF denormalisation)
+  norm_stats.json    ERA5 channel-wise mean/std (normalisation stats)
   eval_dates.npy     ISO date strings for the eval time axis
   lat.npy, lon.npy   ERA5 grid coordinates
 
 Variable order is set by --variables (default: tas pr sfcWind sfcWindmax psl).
 
 Interpolation modes:
-  bicubic   — standard bicubic upsampling (default; use for CM, BCSD, bicubic)
-  spectral  — bicubic + Fourier low-pass at --r-cut pixels (use for SerpentFlow)
+  bicubic   — standard bicubic upsampling (default)
 
 Run on Cleps (CPU node):
   python evaluation/data_processing.py \
       --era5-dir /scratch/jkeisler/era5 \
       --gcm-dir  /scratch/jkeisler/cmip6/ipsl_cm6a_lr \
-      --out-dir  /scratch/jkeisler/serpenflow/data \
-      --interpolation spectral --r-cut 12
+      --out-dir  /scratch/jkeisler/benchmark/data
 """
 from __future__ import annotations
 
@@ -73,7 +71,7 @@ def load_era5(era5_dir: Path, variable: str, start: int, end: int) -> xr.DataArr
 
 
 def load_gcm(gcm_dir: Path, variable: str, start: int, end: int,
-             scenario: str = "ssp585") -> xr.DataArray:
+             scenario: str = "ssp370") -> xr.DataArray:
     """Load historical + scenario GCM files, select [start, end]."""
     candidates = [
         gcm_dir / f"{variable}_historical_1960-2014.nc",
@@ -91,7 +89,7 @@ def load_gcm(gcm_dir: Path, variable: str, start: int, end: int,
     if not das:
         raise FileNotFoundError(
             f"No GCM files for {variable} {start}–{end} in {gcm_dir}")
-    da = xr.concat(das, dim="time") if len(das) > 1 else das[0]
+    da = xr.concat(das, dim="time")
     if variable in CMIP6_UNIT_CONV:
         da = CMIP6_UNIT_CONV[variable](da)
     return da.load()
@@ -147,110 +145,52 @@ def bicubic_regrid(
         Target longitude coordinates
     """
 
-    src_lat = gcm.lat.values
-    src_lon = gcm.lon.values
-    data = gcm.values
-
+    src_lat    = gcm.lat.values
+    src_lon    = gcm.lon.values
+    data       = gcm.values                     # [T, H_s, W_s]
     target_lat = np.asarray(target_lat)
     target_lon = np.asarray(target_lon)
 
-    nt = data.shape[0]
-
-    out = np.empty(
-        (nt, len(target_lat), len(target_lon)),
-        dtype=data.dtype,
-    )
-
-    # assume regular grids
+    nt   = data.shape[0]
+    H_s  = len(src_lat)
+    W_s  = len(src_lon)
+    H_t  = len(target_lat)
+    W_t  = len(target_lon)
     dlat = src_lat[1] - src_lat[0]
     dlon = src_lon[1] - src_lon[0]
 
-    for i, lat in enumerate(target_lat):
+    offsets = np.array([-1, 0, 1, 2])
 
-        # fractional source index
-        y = (lat - src_lat[0]) / dlat
-        iy = int(np.floor(y))
-        fy = y - iy
+    # Vectorise over all target latitudes
+    y   = (target_lat - src_lat[0]) / dlat      # [H_t]
+    iy  = np.floor(y).astype(int)
+    fy  = y - iy
+    iy0 = np.clip(iy[:, None] + offsets, 0, H_s - 1)   # [H_t, 4]
+    wy  = _cubic_kernel(offsets - fy[:, None])           # [H_t, 4]
+    wy /= wy.sum(axis=1, keepdims=True)
 
-        iy0 = np.clip(
-            np.arange(iy - 1, iy + 3),
-            0,
-            len(src_lat) - 1,
-        )
+    # Precompute longitude weights once
+    x   = (target_lon - src_lon[0]) / dlon      # [W_t]
+    ix  = np.floor(x).astype(int)
+    fx  = x - ix
+    ix0 = np.clip(ix[:, None] + offsets, 0, W_s - 1)   # [W_t, 4]
+    wx  = _cubic_kernel(offsets - fx[:, None])           # [W_t, 4]
+    wx /= wx.sum(axis=1, keepdims=True)
 
-        wy = _cubic_kernel(
-            np.arange(-1, 3) - fy
-        )
-        wy /= wy.sum()
-
-        for j, lon in enumerate(target_lon):
-
-            x = (lon - src_lon[0]) / dlon
-            ix = int(np.floor(x))
-            fx = x - ix
-
-            ix0 = np.clip(
-                np.arange(ix - 1, ix + 3),
-                0,
-                len(src_lon) - 1,
-            )
-
-            wx = _cubic_kernel(
-                np.arange(-1, 3) - fx
-            )
-            wx /= wx.sum()
-
-            # 4x4 bicubic stencil
-            patch = data[:, iy0[:, None], ix0[None, :]]
-
-            # tensor product weights
-            out[:, i, j] = np.einsum(
-                "tij,i,j->t",
-                patch,
-                wy,
-                wx,
-            )
+    out = np.empty((nt, H_t, W_t), dtype=data.dtype)
+    for i in range(H_t):
+        rows   = data[:, iy0[i], :]                      # [T, 4, W_s]
+        rows_w = np.einsum("p,tpw->tw", wy[i], rows)    # [T, W_s]
+        cols   = rows_w[:, ix0]                          # [T, W_t, 4]
+        out[:, i, :] = np.einsum("jq,tjq->tj", wx, cols)  # [T, W_t]
 
     return xr.DataArray(
         out,
         dims=("time", "lat", "lon"),
-        coords={
-            "time": gcm.time,
-            "lat": target_lat,
-            "lon": target_lon,
-        },
+        coords={"time": gcm.time, "lat": target_lat, "lon": target_lon},
         name=gcm.name,
         attrs=gcm.attrs,
     )
-
-def _fourier_lowpass(x: torch.Tensor, r_cut: int) -> torch.Tensor:
-    """Circular low-pass filter in Fourier space. x: [T, H, W]."""
-    T, H, W = x.shape
-    Y, X = torch.meshgrid(torch.arange(H), torch.arange(W), indexing="ij")
-    cy, cx = H // 2, W // 2
-    mask = ((X - cx).float() ** 2 + (Y - cy).float() ** 2 <= r_cut ** 2)
-    mask = mask[None].float()  # [1, H, W]
-    x4 = x.unsqueeze(1)       # [T, 1, H, W]
-    fft = torch.fft.fftshift(torch.fft.fft2(x4, dim=(-2, -1)), dim=(-2, -1))
-    filtered = torch.fft.ifft2(
-        torch.fft.ifftshift(fft * mask, dim=(-2, -1)), dim=(-2, -1)
-    ).real
-    return filtered.squeeze(1)  # [T, H, W]
-
-
-def spectral_regrid(gcm: xr.DataArray, target_lat, target_lon,
-                    r_cut: int = 12) -> xr.DataArray:
-    """Bicubic upsample then Fourier low-pass at r_cut pixels.
-
-    Removes bicubic ringing artefacts and keeps only frequencies the GCM
-    genuinely contains. r_cut ≈ min(GCM_H, GCM_W) / 2 is a sensible default.
-    For SerpentFlow use r_cut=1 (only shared low-freq content).
-    """
-    upsampled = bicubic_regrid(gcm, target_lat, target_lon)
-    arr = torch.tensor(upsampled.values, dtype=torch.float32)  # [T, H, W]
-    filtered = _fourier_lowpass(arr, r_cut).numpy()
-    return upsampled.copy(data=filtered)
-
 
 # ── Quantile Delta Mapping ────────────────────────────────────────────────────
 
@@ -342,8 +282,18 @@ def qdm_correct(
 # ── Tensor utilities ──────────────────────────────────────────────────────────
 
 def align_time(das: dict[str, xr.DataArray]) -> dict[str, xr.DataArray]:
-    """Subset each DataArray to the common date intersection."""
-    date_sets = [set(da.time.dt.strftime("%Y-%m-%d").values) for da in das.values()]
+    """Subset each DataArray to the common date intersection.
+
+    Every returned DataArray is re-stamped to a date-only numpy datetime64
+    axis so downstream xarray ops (xr.corr, xr.align, save_predictions) align
+    on identical values. Without this, a cftime GCM axis (e.g. midday 12:00)
+    and an np.datetime64 prediction axis (midnight 00:00) share the same dates
+    yet yield all-NaN xr.corr inner-joins.
+    """
+    # Compute date strings once per DataArray (cftime strftime is slow at 36k+ steps)
+    keys = list(das.keys())
+    all_dates = [np.array([str(t)[:10] for t in das[k].time.values]) for k in keys]
+    date_sets = [set(d) for d in all_dates]
     common = sorted(set.intersection(*date_sets))
     if not common:
         raise ValueError(
@@ -351,11 +301,12 @@ def align_time(das: dict[str, xr.DataArray]) -> dict[str, xr.DataArray]:
             "Check that the ERA5 and GCM periods overlap and that both directories contain data."
         )
     print(f"  Common timesteps: {len(common)}")
+    common64 = np.array(common, dtype="datetime64[ns]")
     result = {}
-    for key, da in das.items():
-        dates = da.time.dt.strftime("%Y-%m-%d").values
-        idx = [i for i, d in enumerate(dates) if d in set(common)]
-        result[key] = da.isel(time=idx)
+    for k, dates in zip(keys, all_dates):
+        idx = np.where(np.isin(dates, common))[0]
+        da = das[k].isel(time=idx)
+        result[k] = da.assign_coords(time=common64)
     return result
 
 
@@ -396,7 +347,9 @@ def save_predictions(
     out_dir.mkdir(parents=True, exist_ok=True)
     torch.save(tensor, out_dir / "predictions.pt")
     np.save(out_dir / "variables.npy", np.array(variables))
-    np.save(out_dir / "eval_dates.npy", ref_da.time.dt.strftime("%Y-%m-%d").values)
+    import pandas as pd
+    dates = pd.to_datetime(ref_da.time.values).strftime("%Y-%m-%d").to_numpy()
+    np.save(out_dir / "eval_dates.npy", dates)
     np.save(out_dir / "lat.npy", ref_da.lat.values)
     np.save(out_dir / "lon.npy", ref_da.lon.values)
     print(f"Saved predictions → {out_dir}  {list(tensor.shape)}")
@@ -448,15 +401,13 @@ def main():
     p.add_argument("--gcm-dir",  required=True)
     p.add_argument("--out-dir",  required=True)
     p.add_argument("--variables", nargs="+", default=DEFAULT_VARIABLES)
-    p.add_argument("--train-start", type=int, default=1979)
+    p.add_argument("--train-start", type=int, default=1960)
     p.add_argument("--train-end",   type=int, default=2003)
     p.add_argument("--eval-start",  type=int, default=2004)
     p.add_argument("--eval-end",    type=int, default=2014)
-    p.add_argument("--interpolation", choices=["bicubic", "spectral"],
+    p.add_argument("--interpolation", choices=["bicubic"],
                    default="bicubic")
-    p.add_argument("--r-cut", type=int, default=12,
-                   help="Fourier low-pass radius in pixels (spectral mode only)")
-    p.add_argument("--scenario", default="ssp585",
+    p.add_argument("--scenario", default="ssp370",
                    help="GCM scenario for files beyond 2014")
     args = p.parse_args()
 
@@ -466,9 +417,7 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     variables = args.variables
 
-    regrid_fn = (lambda gcm, lat, lon: spectral_regrid(gcm, lat, lon, args.r_cut)
-                 if args.interpolation == "spectral"
-                 else bicubic_regrid(gcm, lat, lon))
+    regrid_fn = bicubic_regrid
 
     # ── ERA5 training tensor ───────────────────────────────────────────────────
     print(f"\n=== ERA5 training {args.train_start}–{args.train_end} ===")

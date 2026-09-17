@@ -35,17 +35,19 @@ ESGF_SEARCH = "https://esgf-data.dkrz.de/esg-search/search"
 
 # CDS model id -> ESGF source_id
 SOURCE_IDS = {
-    "ipsl_cm6a_lr": "IPSL-CM6A-LR",
-    "cnrm_cm6_1":   "CNRM-CM6-1",
-    "cesm2":        "CESM2",
+    "ipsl_cm6a_lr":  "IPSL-CM6A-LR",
+    "cnrm_cm6_1":    "CNRM-CM6-1",
+    "cesm2":         "CESM2",
+    "access_esm1_5": "ACCESS-ESM1-5",
 }
 
 # Default ensemble member per model (overridden by config `members` key).
 # If a member has no files for a specific experiment, auto-detect is used.
 DEFAULT_MEMBERS = {
-    "ipsl_cm6a_lr": "r1i1p1f1",
-    "cnrm_cm6_1":   "r1i1p1f2",
-    "cesm2":        "r1i1p1f1",
+    "ipsl_cm6a_lr":  "r1i1p1f1",
+    "cnrm_cm6_1":    "r1i1p1f2",
+    "cesm2":         "r1i1p1f1",
+    "access_esm1_5": "r1i1p1f1",
 }
 
 HISTORICAL_END = 2014
@@ -198,7 +200,18 @@ def fetch(task: tuple) -> str | None:
         if not local_files:
             return f"{model} {variable} {experiment}: no files downloaded"
 
-        ds = xr.open_mfdataset(local_files, combine="by_coords", use_cftime=True)
+        # open_mfdataset always tries dask even with chunks=None on newer xarray;
+        # use per-file open_dataset + concat to avoid the dependency entirely.
+        try:
+            _coder = xr.coders.CFDatetimeCoder(use_cftime=True)
+            _open_kw: dict = dict(decode_times=_coder)
+        except AttributeError:
+            _open_kw = dict(use_cftime=True)
+        try:
+            _datasets = [xr.open_dataset(f, **_open_kw) for f in sorted(local_files)]
+        except Exception as exc:
+            return f"{model} {variable} {experiment}: failed to open downloaded file — {exc}"
+        ds = xr.concat(_datasets, dim="time") if len(_datasets) > 1 else _datasets[0]
 
         # Crop to domain — handle both -180..180 and 0..360 lon conventions
         lat_dim = "lat" if "lat" in ds.dims else "latitude"
@@ -221,7 +234,8 @@ def fetch(task: tuple) -> str | None:
 
         tmp_out = target.with_suffix(".tmp.nc")
         ds.to_netcdf(tmp_out)
-        ds.close()
+        for d in _datasets:
+            d.close()
         tmp_out.rename(target)
         print(f"[done] {target}")
 

@@ -77,8 +77,6 @@ def delta_change_score(
         score = mean_grid | Δ_method - Δ_gcm |
 
     where Δ = (future_mean - hist_mean) / |hist_mean| × 100 (% change).
-
-    Follows compute_delta_metric() from serpentflow/generate_plot.py.
     """
     hist_pred = pred_hist.mean("time").values
     fut_pred  = pred_fut.mean("time").values

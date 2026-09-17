@@ -89,11 +89,6 @@ under `members`.
 Helper called by `download_era5.py` for the wind pipeline. Can also be run
 standalone to download any hourly ERA5 variable.
 
-### `local_data/convert_serpentflow_wind.py`
-
-Converts wind data from an existing SerpentFlow experiment into the benchmark's
-expected format. Only needed if reusing wind tensors from a prior run.
-
 ---
 
 ## Variables

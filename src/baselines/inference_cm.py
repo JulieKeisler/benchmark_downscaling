@@ -61,7 +61,7 @@ def run(
     calib_start: int   = 1980,
     eval_start:  int   = 2000,
     eval_end:    int   = 2100,
-    scenario:    str   = "ssp585",
+    scenario:    str   = "ssp370",
     stroke_time: float = 0.5,
     n_members:   int   = 1,
     batch_size:  int   = 32,
@@ -75,21 +75,19 @@ def run(
 
     model, stats = _load_model(ckpt_path)
 
-    ref        = load_era5(era5_dir, VARIABLES[0], calib_start, calib_start)
-    target_lat = ref.lat.values
-    target_lon = ref.lon.values
+    calib_end = calib_start + 19
+    print(f"  [CM] loading ERA5+GCM calibration {calib_start}–{calib_end} ...", flush=True)
+    _all = {}
+    for v in VARIABLES:
+        _all[f"e_{v}"] = load_era5(era5_dir, v, calib_start, calib_end)
+        _all[f"g_{v}"] = load_gcm(gcm_dir, v, calib_start, calib_end, "historical")
+    _aligned = align_time(_all)
+    era5_cal = {v: _aligned[f"e_{v}"] for v in VARIABLES}
+    gcm_cal  = {v: _aligned[f"g_{v}"] for v in VARIABLES}
 
-    print(f"  [CM] loading ERA5+GCM calibration {calib_start}–{calib_start+19} ...", flush=True)
-    era5_calib = {v: load_era5(era5_dir, v, calib_start, calib_start + 19)
-                  for v in VARIABLES}
-    gcm_calib  = align_time({v: load_gcm(gcm_dir, v, calib_start, calib_start + 19, "historical")
-                              for v in VARIABLES})
-    # Align ERA5 and GCM calibration to common dates
-    _all = {f"e_{v}": era5_calib[v] for v in VARIABLES}
-    _all.update({f"g_{v}": gcm_calib[v] for v in VARIABLES})
-    _aligned  = align_time(_all)
-    era5_cal  = {v: _aligned[f"e_{v}"] for v in VARIABLES}
-    gcm_cal   = {v: _aligned[f"g_{v}"] for v in VARIABLES}
+    ref_v      = era5_cal[VARIABLES[0]]
+    target_lat = ref_v.lat.values
+    target_lon = ref_v.lon.values
 
     print(f"  [CM] loading GCM {eval_start}–{eval_end} ...", flush=True)
     gcm_eval = align_time({v: load_gcm(gcm_dir, v, eval_start, eval_end, scenario)
@@ -139,7 +137,7 @@ def main():
     p.add_argument("--calib-start",    type=int, default=1980)
     p.add_argument("--eval-start",     type=int, default=2000)
     p.add_argument("--eval-end",       type=int, default=2100)
-    p.add_argument("--scenario",       default="ssp585")
+    p.add_argument("--scenario",       default="ssp370")
     p.add_argument("--stroke-time",    type=float, default=1.0)
     p.add_argument("--n-members",      type=int,   default=1)
     p.add_argument("--batch-size",     type=int,   default=32)

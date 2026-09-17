@@ -55,72 +55,6 @@ def _align_pair(obs: xr.DataArray, gcm: xr.DataArray) -> tuple[xr.DataArray, xr.
 
 
 
-def _serpentflow_load_predictions_legacy(
-    sf_pt_dir: Path,
-    obs_vars: dict[str, xr.DataArray],
-    variables: list[str],
-) -> dict[str, xr.DataArray]:
-    """Legacy: loads old external SerpentFlow output format (pre-self-contained).
-    The new self-contained inference_serpentflow.py saves standard predictions.pt;
-    use --pred-dir for those. This helper is kept for backward compatibility only.
-    """
-    """Load SerpentFlow output from the original inference_serpentflow.py format.
-
-    This is the legacy format (normalised space + separate stats file). For all
-    other methods use load_predictions() which reads the standard predictions.pt.
-
-    Expects in sf_pt_dir:
-      sf_all5_ipsl.pt    — [T, C, H, W] normalised predictions
-      sf_norm_stats.json — ERA5 channel mean/std for denormalisation
-      sf_eval_dates.npy  — ISO date strings
-      sf_lat.npy / sf_lon.npy — ERA5 grid arrays
-    """
-    import torch, json as _json, pandas as _pd
-
-    pt_file    = sf_pt_dir / "sf_all5_ipsl.pt"
-    stats_file = sf_pt_dir / "sf_norm_stats.json"
-    dates_file = sf_pt_dir / "sf_eval_dates.npy"
-    lat_file   = sf_pt_dir / "sf_lat.npy"
-    lon_file   = sf_pt_dir / "sf_lon.npy"
-
-    for p in [pt_file, stats_file, dates_file]:
-        if not p.exists():
-            raise FileNotFoundError(f"SerpentFlow output file not found: {p}")
-
-    tensor = torch.load(pt_file, map_location="cpu")   # [T, C, H, W]
-    with open(stats_file) as f:
-        norm_stats = _json.load(f)
-    dates = np.load(dates_file, allow_pickle=True)
-    lat   = np.load(lat_file)
-    lon   = np.load(lon_file)
-
-    # Return ALL SF dates as the time coordinate — the main loop's _align_pair
-    # will slice to the ERA5 period for vs-ERA5 metrics and to the full GCM
-    # period for vs-GCM metrics (enabling delta change scores up to 2100).
-    time_coord = _pd.to_datetime(dates)
-
-    VARIABLES_SF = ["tas", "pr", "sfcWind", "sfcWindmax", "psl"]
-    PHYS_MIN = {"pr": 0.0, "sfcWind": 0.0, "sfcWindmax": 0.0}
-
-    results = {}
-    for i, var in enumerate(VARIABLES_SF):
-        if var not in variables:
-            continue
-        s = norm_stats[var]
-        ch = tensor[:, i].numpy().astype(np.float64)
-        ch = ch * s["std"] + s["mean"]
-        if var in PHYS_MIN:
-            ch = np.clip(ch, PHYS_MIN[var], None)
-        results[var] = xr.DataArray(
-            ch.astype(np.float32),
-            coords={"time": time_coord, "lat": lat, "lon": lon},
-            dims=["time", "lat", "lon"],
-        )
-        print(f"  [serpentflow] {var}: shape={results[var].shape}, "
-              f"mean={float(results[var].mean()):.4g}", flush=True)
-    return results
-
-
 def _consistency_downscale_all_legacy(
     gcm_vars: dict[str, xr.DataArray],
     obs_vars: dict[str, xr.DataArray],
@@ -405,13 +339,13 @@ def main(argv: list[str] | None = None) -> int:
                         default="bicubic",
                         help="Method name — any string. Built-in inline methods: "
                              "bicubic, cdft. Pre-compute methods (require --pred-dir): "
-                             "bcsd, idownscale, consistency/cm, serpentflow/sf. "
+                             "bcsd, idownscale, consistency/cm. "
                              "Custom names (hackathon submissions) are accepted when "
-                             "--pred-dir is provided. cm=alias for consistency; sf=alias for serpentflow.")
+                             "--pred-dir is provided. cm=alias for consistency.")
     parser.add_argument("--pred-dir", default=None,
                         help="Directory with pre-computed predictions.pt (standard format). "
-                             "Required for neural methods (idownscale, consistency, serpentflow). "
-                             "Use output of inference_idownscale/inference_cm/inference_serpentflow.py.")
+                             "Required for neural methods (idownscale, consistency). "
+                             "Use output of inference_idownscale/inference_cm.py.")
     args = parser.parse_args(argv)
 
     cfg_path = ROOT / args.config
@@ -424,9 +358,9 @@ def main(argv: list[str] | None = None) -> int:
     start   = args.start   or cfg["period"]["start"]
     end     = args.end     or cfg["period"]["end"]
     gcm_end = args.gcm_end  # full GCM period end for vs-GCM metrics
-    # cm/sf are display-name aliases
+    # cm is a display-name alias
     effective_method = {
-        "cm": "consistency", "sf": "serpentflow"
+        "cm": "consistency",
     }.get(args.method, args.method)
     dic_labels = {
         "bicubic":     "Bicubic",
@@ -434,8 +368,6 @@ def main(argv: list[str] | None = None) -> int:
         "idownscale":  "iDownscale",
         "consistency": "CM",
         "cm":          "CM",
-        "serpentflow": "SF",
-        "sf":          "SF",
     }
     if args.method in dic_labels:
         method_label = dic_labels[args.method]
@@ -467,14 +399,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: {e}")
             return 1
 
-    elif effective_method in ("serpentflow", "consistency", "idownscale", "bcsd"):
+    elif effective_method in ("consistency", "idownscale", "bcsd"):
         # Pre-compute methods: run inference script first, then evaluate via --pred-dir
         if not args.pred_dir:
             script = {
                 "bcsd": "inference_bcsd.py",
                 "idownscale": "inference_idownscale.py",
                 "consistency": "train_consistency.py + inference_cm.py",
-                "serpentflow": "inference_serpentflow.py",
             }.get(effective_method, f"inference_{effective_method}.py")
             print(f"ERROR: --pred-dir is required for --method {args.method}. "
                   f"Run {script} first.")

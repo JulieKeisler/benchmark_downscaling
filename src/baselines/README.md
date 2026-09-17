@@ -148,7 +148,27 @@ per-month KS statistic:
 
 ---
 
-## 4. iDownscale (`idownscale`)
+## 4. DOTC (`dotc`)
+
+**Type:** trend-preserving CDF-t (distribution of trends correction)
+(Vrac et al. 2012).
+
+DOTC preserves the GCM's forced trend while correcting the distribution:
+
+1. Detrend both GCM and ERA5 over the calibration period (linear trend per grid point)
+2. Apply CDF-t (via SBCK) to the detrended values
+3. Re-add the original GCM trend to the bias-corrected data
+
+This is done month-by-month per grid cell with a 20-year sliding window over the evaluation period (step 10 years, keep central 10 years) to handle non-stationarity in future GCM distributions. Requires `pip install sbck`.
+
+**Pre-processing.** GCM is bicubic-regridded to the ERA5 grid before DOTC.
+DOTC is applied in ERA5 grid space (each of the 57×65 cells independently).
+
+**Physical clipping.** After correction, `pr`, `sfcWind`, `sfcWindmax` are clipped to non-negative values.
+
+---
+
+## 5. iDownscale (`idownscale`)
 
 **Type:** supervised U-Net regression with perfect-prognosis training
 (CERFACS, [iDownscale EGU26 short course](https://github.com/cerfacs-globc/idownscale/tree/master/docs/egu26_short_course)).
@@ -196,79 +216,66 @@ Spatial dimensions: $H \times W$.
 
 ---
 
-## 5. SerpentFlow (`serpentflow`)
+## 6. CorrDiff-QM (`corrdiff_qm`)
 
-**Type:** flow-matching generative model with spectral scale separation
-(Keisler et al. 2026).
+**Type:** stochastic residual-diffusion downscaler with coarse quantile-mapping
+pre-correction (Mardani et al. 2025, adapted) — a "perfect prognosis + noisy"
+generative model: a deterministic regression stage predicts the mean, a DDPM
+stage learns the residual distribution around it.
 
-### Scale separation
+### Training (ERA5 only, 1980–1999)
 
-Each ERA5 field is decomposed into a shared large-scale component (low-pass)
-and a domain-specific fine-scale component (residual). The low-pass filter is
-a 2D Fourier circular mask with cutoff radius $r_c = 1$ pixel in frequency space:
-
-$$
-x_{\mathrm{lp}} = \mathcal{F}^{-1}\left( \mathcal{F}(x) \cdot \mathbb{1}\left[\sqrt{f_x^2 + f_y^2} \leq r_c\right] \right)
-$$
-
-With $r_c = 1$, only the DC component and first-order harmonics are retained —
-essentially the spatial mean and very large-scale gradient. The model must learn
-to generate all spatial structure from this minimal conditioning signal.
-
-### Training
-
-Pseudo-pairs $(x_0, x_1)$ are constructed from ERA5 1980–1999:
-- $x_0 = x_{\mathrm{lp}} + \varepsilon$ , where $\varepsilon \sim \mathcal{N}(0,\ \sigma_{\mathrm{HF}}^2 \cdot I)$ with $\sigma_{\mathrm{HF}} = 0.1$ (stochastic source)
-- $x_1 = x$ (full ERA5 target, in normalised space)
-
-The flow model $v_\theta$ learns the conditional velocity field via linear flow
-matching with an **EDM-skewed time schedule** (Karras et al. 2022):
+Pairs are built the same way as iDownscale (coarsen ERA5 by stride 4, regrid
+back up) — no GCM fields and no GCM/ERA5 same-date pairs are ever used:
 
 $$
-\sigma = \exp\left( \mathcal{N}(\mu_P,\ \sigma_P^2) \right), \quad \mu_P = -1.2, \quad \sigma_P = 1.2
+x_t = \mathcal{I}\left( \mathrm{ERA5}_t[::4,\ ::4],\ \mathrm{lat},\ \mathrm{lon} \right), \qquad
+y_t = \mathrm{ERA5}_t
 $$
 
-$$
-t = \frac{1}{1 + \sigma}, \quad t \in (0, 1)
-$$
-
-This concentrates training samples near $t \approx 0.77$ (fine-scale generation
-regime where the interpolated field $x_t = (1-t)\,x_0 + t\,x_1$ is close to the
-target but still has structure to resolve).
-
-The MSE loss on the velocity field:
+**Stage 1 — mean regression.** A plain U-Net (same as iDownscale) predicts the
+conditional mean from (coarsened input, month embedding):
 
 $$
-x_t = (1-t)\,x_0 + t\,x_1
+\mu_t = f_\theta\left( \phi(x_t),\ m_t \right), \qquad
+\mathcal{L}_1 = \mathbb{E}\left[\left\| \mu_t - \phi(y_t) \right\|^2\right]
 $$
 
-$$
-\mathcal{L} = \mathbb{E}\left[\left\| v_\theta( x_t,\ m_t,\ t ) - (x_1 - x_0) \right\|^2\right]
-$$
-
-### Inference
-
-Starting from the bicubic-regridded GCM after spectral low-pass ( $r_c = 1$ )
-plus HF noise:
+**Stage 2 — residual diffusion.** The residual $r_t = \phi(y_t) - \mu_t$ is
+diffused with a cosine-noise DDPM ($T=1000$) and learned as
+$\epsilon_\phi(x_{\mathrm{lr}}, \mu, m, t)$; the denoiser is a
+`DiffusersUNet` (128/128/256/256 channels, SiLU, GroupNorm, bottleneck
+attention; ~27M params) conditioned by concatenating $[x_{\mathrm{lr}},\ \mu,\ x_t,\ m]$:
 
 $$
-x_0 = \phi\left( \mathcal{F}_{\mathrm{lp}}( \mathrm{GCM} ) \right) + \varepsilon, \quad \varepsilon \sim \mathcal{N}(0,\ \sigma_{\mathrm{HF}}^2 \cdot I)
+\mathcal{L}_2 = \mathbb{E}_{t, \epsilon}\left[\left\| \epsilon - \epsilon_\phi( \ldots, t ) \right\|^2\right]
 $$
 
-$$
-\hat{y} = \mathrm{ODESolve}\left( \frac{dx}{dt} = v_\theta(x,\ m,\ t),\quad x(0)=x_0,\quad t: 0 \to 1 \right)
-$$
+**Checkpoints** (saved to `<out-dir>/checkpoints/`):
+`corrdiff_reg.pt` (Stage 1 + stats), `corrdiff_resdiff.pt` (Stage 2),
+`corrdiff_grid.pt` (ERA5 ref grid for inference).
 
-ODE integration uses `dopri5` (Dormand–Prince adaptive RK45) via `torchdiffeq`
-when available, falling back to 50-step fixed Euler otherwise.
+### Inference (GCM)
 
-**Architecture.** `UNetAttention` (self-attention at two lowest spatial resolutions),
-`init_features=32`. Input channels: $N_v + 3$ (5 variables + sin/cos month + $t$ ).
-Output channels: $N_v$.
+1. **Coarse QM.** GCM fields are quantile-mapped to ERA5 on the 4×-coarsened
+   grid, calibrated **per grid cell, per calendar month** on the historical
+   period only (1980–1999). Calibration data is never reused at evaluation.
+2. **Bicubic upsample + encode** to the ERA5 grid and $[-1,1]$ (iDownscale-style).
+3. **Sample** $N$ members by running the DDPM reverse process (strided, default
+   50 steps) from the Stage-1 mean and Stage-2 residual:
+   $\hat{y}^{(n)}_t = \mu_t + r^{(n)}_t$.
+4. Decode to physical units, clip `pr`, `sfcWind`, `sfcWindmax` at 0, and
+   **average the ensemble** (default $N=10$) into a single `[T, C, H, W]` field
+   written via `save_predictions` (same format as the deterministic baselines).
+
+The Coarse-QM step keeps the generative model on ERA5 statistics, mirroring
+iDownscale's CDF-t pre-correction rationale. DDPM reverse steps use the
+standard posterior mean with variance $\sigma^2 = \beta (1 - \bar\alpha_{t-1})
+/ (1 - \bar\alpha_t)$, clamped at the $t=0$ step.
 
 ---
 
-## 6. Consistency Model (`cm`)
+## 7. Consistency Model (`cm`)
 
 **Type:** consistency distillation with stroke-guidance inference
 (Hess et al. 2025 / adapted).
@@ -357,8 +364,8 @@ matches the consistency model literature (Song et al. 2023) for normalized data.
 
 ## Shared normalisation
 
-All three neural baselines (iDownscale, SerpentFlow, CM) use the same
-normalisation codec $\phi$ / $\phi^{-1}$, fitted on ERA5 1980–1999:
+All neural baselines (iDownscale, CorrDiff-QM, CM) use the
+same normalisation codec $\phi$ / $\phi^{-1}$, fitted on ERA5 1980–1999:
 
 **Standard variables** (linear min-max to $[-1, 1]$ ):
 
@@ -401,7 +408,7 @@ at the bottleneck).
 Month is encoded as two channels $[\sin(2\pi m/12),\ \cos(2\pi m/12)]$ broadcast to the
 full spatial resolution and concatenated with the input.
 
-For SerpentFlow and CM, the flow time $t$ is broadcast as a scalar constant spatial
+For CM, the flow time $t$ is broadcast as a scalar constant spatial
 channel (simpler than sinusoidal embedding; unified across modes).
 
 ---
@@ -414,8 +421,14 @@ channel (simpler than sinusoidal embedding; unified across modes).
 - **Michelangeli et al. (2009).** *Probabilistic downscaling approaches: Application to wind cumulative distribution functions.* Geophysical Research Letters, 36(11), L11708.
   → CDF-t method: accounting for distribution shift between calibration and projection periods.
 
+- **Vrac et al. (2012).** *Screening multiple statistical downscaling methods for climate change projections over France.* Hydrology and Earth System Sciences, 16(12), 4697–4715.
+  → Foundation of DOTC: Distribution of Trends Correction for preserving GCM forced trends while correcting distributions.
+
 - **CERFACS (2025).** *iDownscale: EGU26 short course on ML-based downscaling.* [github.com/cerfacs-globc/idownscale](https://github.com/cerfacs-globc/idownscale/tree/master/docs/egu26_short_course).
   → iDownscale: perfect-prognosis U-Net regression with coarse CDF-t pre-correction.
+
+- **Mardani et al. (2025).** *Residual Corrective Diffusion Modeling for Km-Scale Atmospheric Downscaling.* arXiv:2209.07619 (2024/2025 revisions).
+  → CorrDiff-QM: two-stage generative downscaling — a deterministic regression stage plus a residual DDPM, with coarse quantile-mapping pre-correction; the source of this baseline's architecture.
 
 - **Song et al. (2023).** *Consistency Models.* arXiv:2303.01469.
   → Consistency distillation framework: self-consistency property, curriculum $N$, EMA teacher, skip parameterisation.
@@ -425,7 +438,3 @@ channel (simpler than sinusoidal embedding; unified across modes).
 
 - **Hess et al. (2025).** *Fast, scale-adaptive and uncertainty-aware downscaling of Earth system model fields with generative machine learning.* Nature Machine Intelligence, 7, 363–373.
   → Consistency-model-based climate downscaling: generative downscaling of climate model fields, GCM conditioning, and training/evaluation protocol.
-
-- **Keisler et al. (2026).** *Generative Unsupervised Downscaling of Climate Models via Domain Alignment: Application to Wind Fields.* HAL open archive, hal-05491335.
-  → Generative unsupervised downscaling of climate-model wind fields using domain alignment; multivariate wind-field generation and climate-model-to-observation distribution matching.
-  → https://hal.science/hal-05491335

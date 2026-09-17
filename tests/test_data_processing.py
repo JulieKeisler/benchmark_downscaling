@@ -88,6 +88,33 @@ class TestAlignTime:
         with pytest.raises(ValueError, match="no common dates"):
             align_time({"a": da_a, "b": da_b})
 
+    def test_restamps_mixed_dtypes_and_timeofday(self):
+        """cftime (e.g. 12:00) and np.datetime64 (e.g. 00:00) inputs must share
+        one identical date-only np.datetime64 axis so xr.corr inner-joins work."""
+        cftime = pytest.importorskip("cftime")
+        lat = np.linspace(41.0, 45.5, 10)
+        lon = np.linspace(-5.0, 0.5, 12)
+        n = 30
+        a_time = np.array(["2010-01-" + f"{d:02d}" for d in range(1, n + 1)],
+                          dtype="datetime64[D]")
+        b_time = [str(t)[:10] for t in
+                  [cftime.DatetimeGregorian(2010, 1, d, 12) for d in range(1, n + 1)]]
+        da_a = xr.DataArray(np.random.default_rng(0).standard_normal((n, 10, 12)),
+                            coords={"time": a_time, "lat": lat, "lon": lon},
+                            dims=["time", "lat", "lon"])
+        da_b = xr.DataArray(np.random.default_rng(0).standard_normal((n, 10, 12)),
+                            coords={"time": np.array(b_time, dtype="datetime64[ns]"),
+                                    "lat": lat, "lon": lon},
+                            dims=["time", "lat", "lon"])
+        aligned = align_time({"a": da_a, "b": da_b})
+        # Both outputs must share one identical date-only np.datetime64 axis
+        assert aligned["a"].time.dtype == aligned["b"].time.dtype
+        assert str(aligned["a"].time.values[0])[:10] == "2010-01-01"
+        np.testing.assert_array_equal(aligned["a"].time.values, aligned["b"].time.values)
+        out = xr.corr(aligned["a"], aligned["b"], dim="time")
+        assert out.shape == (10, 12)
+        assert not np.isnan(out.values).all(), "aligned corr should not be all-NaN"
+
 
 # ── save_predictions / load_predictions ──────────────────────────────────────
 
