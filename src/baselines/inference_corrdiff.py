@@ -47,7 +47,7 @@ from data_processing import (
 VARIABLES   = ["tas", "pr", "sfcWind", "sfcWindmax", "psl"]
 N_VARS      = len(VARIABLES)
 STRIDE      = 4
-PHYS_MIN    = {"pr": 0.0, "sfcWind": 0.0, "sfcWindmax": 0.0}
+PHYS_MIN    = {"pr": 0.0, "sfcWind": 0.0, "sfcWindmax": 0.0, "rsds": 0.0}
 REG_ARCH    = "unet"            # Stage 1 — plain regression U-Net (idownscale-style)
 DIFF_ARCH   = "diffusers"       # Stage 2 — timestep-FiLM conditioned U-Net
 N_DIFF_T    = 1000              # DDPM schedule length

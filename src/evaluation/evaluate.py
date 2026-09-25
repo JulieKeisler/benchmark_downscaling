@@ -335,6 +335,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gcm-end", type=int, default=2100,
                         help="End of full GCM period for delta metrics (default 2100). "
                              "Predictions loaded via --pred-dir must cover start–gcm-end.")
+    parser.add_argument("--scenario", default=None,
+                        help="GCM future experiment (default: config `scenario`, else ssp370). "
+                             "Must match the scenario the predictions were made on.")
     parser.add_argument("--method",
                         default="bicubic",
                         help="Method name — any string. Built-in inline methods: "
@@ -358,6 +361,7 @@ def main(argv: list[str] | None = None) -> int:
     start   = args.start   or cfg["period"]["start"]
     end     = args.end     or cfg["period"]["end"]
     gcm_end = args.gcm_end  # full GCM period end for vs-GCM metrics
+    scenario = args.scenario or cfg.get("scenario", "ssp370")
     # cm is a display-name alias
     effective_method = {
         "cm": "consistency",
@@ -424,7 +428,7 @@ def main(argv: list[str] | None = None) -> int:
 
         # Load GCM for the full period (2000-2100) — used for all vs-GCM metrics
         try:
-            gcm_full = load_gcm(gcm_dir, variable, start, gcm_end)
+            gcm_full = load_gcm(gcm_dir, variable, start, gcm_end, scenario)
         except FileNotFoundError as e:
             print(f"  SKIP GCM: {e}")
             continue
@@ -554,6 +558,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {v1}-{v2}: {score:.4f}")
             plot_intervar_corr(all_obs[v1], all_obs[v2],
                                all_preds[v1], all_preds[v2],
+        # Radiation: solar-driven warming, cloud/rain anticorrelation, clear skies under highs.
+        ("tas", "rsds"), ("pr", "rsds"), ("psl", "rsds"),
                                v1, v2, method_label, plot_dir)
         except Exception as exc:
             print(f"  {v1}-{v2}: ERROR {exc}")
@@ -574,7 +580,7 @@ def main(argv: list[str] | None = None) -> int:
             if variable not in all_preds_full:
                 continue
             try:
-                gcm_full = load_gcm(gcm_dir, variable, start, gcm_end)
+                gcm_full = load_gcm(gcm_dir, variable, start, gcm_end, scenario)
                 gcm_full_up = bicubic_regrid(gcm_full, _ref_obs.lat.values, _ref_obs.lon.values)
                 pred_full = all_preds_full[variable]
 

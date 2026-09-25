@@ -36,7 +36,7 @@ N_VARS    = len(VARIABLES)
 MODE      = "idownscale"
 ARCH      = "unet"      # plain U-Net — faithful to CERFACS iDownscale paper
 STRIDE    = 4
-PHYS_MIN  = {"pr": 0.0, "sfcWind": 0.0, "sfcWindmax": 0.0}
+PHYS_MIN  = {"pr": 0.0, "sfcWind": 0.0, "sfcWindmax": 0.0, "rsds": 0.0}
 
 
 def _load_era5_raw(era5_dir, calib_start, calib_end):

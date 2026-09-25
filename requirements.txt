@@ -5,3 +5,6 @@ netcdf4>=1.6
 requests>=2.28
 diffusers>=0.25
 sbck>=0.5
+zarr>=2.18
+gcsfs>=2024.2
+pandas>=2.0

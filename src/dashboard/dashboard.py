@@ -453,8 +453,10 @@ with st.sidebar:
         st.warning("Select at least one method.")
         st.stop()
 
-    all_vars = [v for v in next(iter(raw_metrics.values())).keys()
-                if not v.startswith("_")]
+    # Union across methods: taking the first method's keys hid variables (e.g. rsds)
+    # that older submissions lack; missing (method, var) cells render as NaN.
+    all_vars = list(dict.fromkeys(v for m in raw_metrics.values() for v in m
+                                  if not v.startswith("_")))
     sel_vars = st.multiselect("Variables", all_vars, default=all_vars, key="vars")
 
     st.markdown("---")
@@ -1200,7 +1202,6 @@ with tab_radar:
             st.caption("Each axis normalised by mean across methods. temporal_corr* inverted (1−r).")
 
         else:  # By variable
-            all_vars = [v for v in next(iter(raw_metrics.values())).keys() if not v.startswith("_")]
             per_var_keys = [k for k in radar_keys if k != "intervar_corr"]
             if len(per_var_keys) < 3:
                 st.info("Select at least 3 per-variable metrics (inter-var corr is not per-variable).")
