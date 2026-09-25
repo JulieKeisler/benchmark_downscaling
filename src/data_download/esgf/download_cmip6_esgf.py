@@ -112,9 +112,16 @@ def search_files(source_id: str, variable: str, experiment: str,
         # Auto-detect: take first available member
         docs = _query(None)
         if docs:
-            detected = docs[0].get("member_id", ["?"])[0]
+            # Pick the lowest-numbered member deterministically (search order
+            # is arbitrary); keeping every member's files concatenated them
+            # (CESM2 ssp245 pr came out as r4+r10+r11, 3x the time steps).
+            def _rank(m: str) -> tuple:
+                return tuple(int(x) for x in re.findall(r"\d+", m))
+            detected = min((d.get("member_id", ["?"])[0] for d in docs), key=_rank)
             print(f"  NOTE: {source_id} {experiment}: member {member} not found, "
                   f"using {detected}")
+            docs = [d for d in docs if d.get("member_id", ["?"])[0] == detected]
+            member = detected
 
     # Filter to files overlapping our period; collect all mirrors per title
     relevant: dict[str, list[str]] = {}  # title -> ordered list of mirror URLs

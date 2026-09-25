@@ -35,7 +35,7 @@ VARIABLES = ["tas", "pr", "sfcWind", "sfcWindmax", "psl"]
 N_VARS    = len(VARIABLES)
 MODE      = "consistency"
 ARCH      = "diffusers"
-PHYS_MIN  = {"pr": 0.0, "sfcWind": 0.0, "sfcWindmax": 0.0}
+PHYS_MIN  = {"pr": 0.0, "sfcWind": 0.0, "sfcWindmax": 0.0, "rsds": 0.0}
 
 
 def _load_model(ckpt_path: Path):
