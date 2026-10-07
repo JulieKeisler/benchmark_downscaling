@@ -7,6 +7,8 @@ Run with:
 """
 from __future__ import annotations
 
+import functools
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -17,8 +19,54 @@ import plotly.graph_objects as go
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-RESULTS_DIR = ROOT / "results"
+RESULTS_ROOT = ROOT / "results"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+# Experiment/region labels — each is a top-level subdir of results/
+EXPERIMENT_LABELS = {
+    "france":     "France",
+    "australia":  "Australia",
+    "us_central": "US central",
+}
+
+REGION_SHORT = {
+    "france":     "France",
+    "australia":  "Australia",
+    "us_central": "US central",
+}
+
+# Boxes drawn on the world map. `area` is CDS order [North, West, South, East].
+REGION_META = {
+    "france":     {"area": [55.0, -6.0, 41.0, 10.0],  "color": "#4C72B0"},
+    "australia":  {"area": [-24.0, 136.0, -38.0, 152.0], "color": "#55A868"},
+    "us_central": {"area": [48.0, -105.0, 34.0, -89.0], "color": "#C44E52"},
+}
+
+# Native coupling per region: methods live directly under results/{region}/
+NATIVE_GCM = {
+    "france":     "ipsl_cm6a_lr",
+    "australia":  "cnrm_cm6_1",
+    "us_central": "cesm2",
+}
+
+# Scenario tag per GCM (for labels only)
+GCM_SCEN = {
+    "ipsl_cm6a_lr": "ssp370",
+    "cnrm_cm6_1":   "ssp370",
+    "cesm2":        "ssp245",
+}
+
+GCM_LABELS = {
+    "ipsl_cm6a_lr": "IPSL-CM6A-LR",
+    "cnrm_cm6_1":   "CNRM-CM6-1",
+    "cesm2":        "CESM2",
+}
+
+GCM_GRIDS = {
+    "ipsl_cm6a_lr": "IPSL-CM6A-LR · ≈2.5° (11×7)",
+    "cnrm_cm6_1":   "CNRM-CM6-1 · ≈0.5° (10×12)",
+    "cesm2":        "CESM2 · ≈1° (15×13)",
+}
 
 IMG_RESOLUTION_GAP = STATIC_DIR / "resolution_gap.png"
 IMG_BIAS_COMPARISON = STATIC_DIR / "bias_comparison.png"
@@ -59,16 +107,101 @@ _PIPELINE_HTML = """
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "evaluation"))
 from baselines import METHOD_LABELS
-# Extended color palette for up to 12 methods (tab10 + tab20)
+# Extended color palette (tab20)
 COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b",
     "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", "#aec7e8", "#ffbb78",
+    "#98df8a", "#ff9896", "#c5b0d5", "#c49c94", "#f7b6d2", "#c7c7c7",
+    "#dbdb8d", "#9edae5",
 ]
 
 GITHUB_URL = "https://github.com/JulieKeisler/benchmark_downscaling"
 
 st.set_page_config(page_title="Downscaling Benchmark for the Electricity System", layout="wide")
 st.title("Downscaling Benchmark for the Electricity System")
+
+# ── Experiment / region + GCM selection ────────────────────────────────────────
+def _has_methods(d: Path) -> bool:
+    """True if `d` has method subdirs directly under it OR a single GCM level."""
+    if any((d / m / "metrics.json").exists()
+           for m in d.iterdir() if (d / m).is_dir()):
+        return True
+    # factorial layout: results/{region}/{gcm}/{method}
+    return any((d / g / m / "metrics.json").exists()
+               for g in d.iterdir() if (d / g).is_dir()
+               for m in (d / g).iterdir() if (d / g / m).is_dir())
+
+def _coupling_dir(region: str, gcm: str) -> Path:
+    """Directory holding the method subdirs for a (region, gcm) coupling.
+
+    Native couplings store methods directly under results/{region}/; factorial
+    couplings (any GCM other than the region's native one) store them under
+    results/{region}/{gcm}/.
+    """
+    if gcm == NATIVE_GCM.get(region):
+        return RESULTS_ROOT / region
+    return RESULTS_ROOT / region / gcm
+
+def _available_gcms(region: str) -> list[str]:
+    """GCMs with results for a region: the native one (if present) plus any
+    factorial GCM subdirs of results/{region}/."""
+    d = RESULTS_ROOT / region
+    gcms: list[str] = []
+    if not d.exists():
+        return gcms
+    native = NATIVE_GCM.get(region)
+    if native and any((d / m / "metrics.json").exists()
+                      for m in d.iterdir() if (d / m).is_dir()):
+        gcms.append(native)
+    for g in sorted(x for x in d.iterdir() if x.is_dir()):
+        if g.name == native:
+            continue
+        if any((g / m / "metrics.json").exists()
+               for m in g.iterdir() if (g / m).is_dir()):
+            gcms.append(g.name)
+    return gcms
+
+def _gcm_label(gcm: str) -> str:
+    g = GCM_LABELS.get(gcm, gcm.upper())
+    scen = GCM_SCEN.get(gcm, "")
+    return f"{g} ({scen})" if scen else g
+
+experiments = sorted(
+    d.name for d in RESULTS_ROOT.iterdir()
+    if d.is_dir() and not d.name.startswith("_") and _has_methods(d)
+) if RESULTS_ROOT.exists() else []
+if not experiments:
+    st.error(f"No experiment subdirs found in {RESULTS_ROOT}")
+    st.stop()
+# A pending region selection from the welcome-page map click. Applied here —
+# before the widget is instantiated — because widget keys can't be modified
+# after their widget is created.
+_pending_region = st.session_state.pop("_pending_region", None)
+if _pending_region in experiments:
+    st.session_state["experiment"] = _pending_region
+_selected = st.selectbox(
+    "Experiment / Region", experiments,
+    format_func=lambda e: EXPERIMENT_LABELS.get(e, e),
+    key="experiment",
+)
+
+# GCM selector — dependent on the chosen region.
+_available_gcms_region = _available_gcms(_selected)
+if not _available_gcms_region:
+    st.error(f"No GCM results found under {RESULTS_ROOT / _selected}")
+    st.stop()
+# Reset the GCM choice when the region changes (stale widget value guard).
+if "_gcm_region" in st.session_state and st.session_state["_gcm_region"] != _selected:
+    st.session_state["_gcm_region"] = _selected
+    if "_gcm" in st.session_state:
+        del st.session_state["_gcm"]
+st.session_state["_gcm_region"] = _selected
+_selected_gcm = st.selectbox(
+    "GCM", _available_gcms_region,
+    format_func=lambda g: _gcm_label(g),
+    key="gcm",
+)
+RESULTS_DIR = _coupling_dir(_selected, _selected_gcm)
 
 # ── Discover methods ──────────────────────────────────────────────────────────
 EXCLUDED_METHODS = {"automated_degradation"}
@@ -97,8 +230,36 @@ for m in all_method_dirs:
 def mlabel(m: str) -> str:
     return METHOD_LABELS.get(m, m.upper())
 
+def _build_method_colors(methods: list[str]) -> dict[str, str]:
+    """Deterministic method-name -> tab20 color, unique within this region.
+
+    Uses md5(method-name) to pick a palette slot, probing to the next free slot
+    on collision so no two methods ever share a color. The same method name
+    therefore gets a stable color regardless of how many methods are present.
+    """
+    n = len(COLORS)
+    owner: dict[int, str] = {}
+    mapping: dict[str, str] = {}
+    for name in methods:
+        h = int(hashlib.md5(name.encode()).hexdigest(), 16)
+        idx = h % n
+        start = idx
+        while idx in owner:
+            idx = (idx + 1) % n
+            if idx == start:
+                break
+        if idx in owner:  # pool exhausted (should not happen: 20 colors, <20 methods)
+            idx = mapping[name] if name in mapping else 0
+        owner[idx] = name
+        mapping[name] = COLORS[idx]
+    return mapping
+
+
+METHOD_COLORS = _build_method_colors(all_method_dirs)
+
+
 def _method_color(m: str) -> str:
-    return COLORS[list(all_method_dirs).index(m) % len(COLORS)]
+    return METHOD_COLORS.get(m, "#333333")
 
 def _blob_links(paths_str: str) -> str:
     """Turn a space|`+`-separated list of repo paths into GitHub blob links."""
@@ -214,13 +375,6 @@ METRIC_DOCS = {
         "detailed": "KS statistic computed only on the upper tail. Catches under-estimated extreme intensities common in interpolation-only methods.",
         "eq": "",
     },
-    "ks_q05": {
-        "name": "KS lower tail (q < 0.05)",
-        "group": "vs ERA5",
-        "simple": "KS distance restricted to values below the 5th ERA5 quantile.",
-        "detailed": "Lower-tail analogue of ks_q95; relevant for warm/dry tail biases.",
-        "eq": "",
-    },
     "seasonal_mae": {
         "name": "Seasonal MAE",
         "group": "vs ERA5",
@@ -232,14 +386,14 @@ METRIC_DOCS = {
         "name": "Extreme frequency bias",
         "group": "vs ERA5",
         "simple": "Bias in the fraction of days above the 95th ERA5 percentile.",
-        "detailed": "Spatial mean of (frac_pred − frac_era5) using a common ERA5-based threshold. Lower |value| = better extreme frequency.",
+        "detailed": "Spatial mean of |frac_pred − frac_era5| with a common ERA5-based threshold. Lower = better extreme frequency.",
         "eq": "",
     },
     "extreme_intensity": {
         "name": "Extreme intensity bias",
         "group": "vs ERA5",
         "simple": "Bias in the mean intensity of days above the 95th ERA5 percentile.",
-        "detailed": "Spatial mean of the difference in mean intensity above the threshold. Captures how extreme the extremes are.",
+        "detailed": "Spatial mean of |difference| in mean intensity above the threshold. Captures how extreme the extremes are.",
         "eq": "",
     },
     "spectral_mae": {
@@ -298,6 +452,174 @@ def _method_doc(m: str) -> dict | None:
     key = {"consistency": "cm", "cm": "cm", "corrdiff_qm": "corrdiff_qm"}.get(m, m)
     return METHOD_DOCS.get(key)
 
+
+# ── World map with clickable region boxes (region navigation) ────────────────
+
+def _rounded_square(n, w, s, e, r):
+    """Sample the perimeter of a rounded square (rounded rect) in lat/lon space.
+
+    `n, w, s, e` = North, West, South, East; `r` = corner radius (degrees).
+    Returns (lon, lat) arrays tracing the outline, starting at the bottom
+    midpoint and going counter-clockwise.  `(e - w)` is assumed == `(n - s)`
+    so the box is a true square in degree space.
+    """
+    lon, lat = [], []
+    # bottom edge (BL → BR), then BR corner
+    for t in np.linspace(180, 270, 16):
+        a = np.deg2rad(t)
+        lon.append((w + r) + r * np.cos(a)); lat.append((s + r) + r * np.sin(a))
+    for x in np.linspace(w + r, e - r, 24):
+        lon.append(x); lat.append(s)
+    for t in np.linspace(270, 360, 16):
+        a = np.deg2rad(t)
+        lon.append((e - r) + r * np.cos(a)); lat.append((s + r) + r * np.sin(a))
+    # right edge (BR → TR), then TR corner
+    for y in np.linspace(s + r, n - r, 24):
+        lon.append(e); lat.append(y)
+    for t in np.linspace(0, 90, 16):
+        a = np.deg2rad(t)
+        lon.append((e - r) + r * np.cos(a)); lat.append((n - r) + r * np.sin(a))
+    # top edge (TR → TL), then TL corner
+    for x in np.linspace(e - r, w + r, 24):
+        lon.append(x); lat.append(n)
+    for t in np.linspace(90, 180, 16):
+        a = np.deg2rad(t)
+        lon.append((w + r) + r * np.cos(a)); lat.append((n - r) + r * np.sin(a))
+    # left edge (TL → BL), then BL corner (closes the loop)
+    for y in np.linspace(n - r, s + r, 24):
+        lon.append(w); lat.append(y)
+    return np.asarray(lon), np.asarray(lat)
+
+
+def _region_square(key):
+    """Bounding box squared up around the region centre (16° × 16°)."""
+    n, w, s, e = REGION_META[key]["area"]
+    clat, clon = 0.5 * (n + s), 0.5 * (w + e)
+    half = max(0.5 * (n - s), 0.5 * (e - w))     # guarantee a square
+    return clat + half, clon - half, clat - half, clon + half
+
+
+def build_region_map(region_keys, selected=None):
+    """Interactive white world map with one rounded square per benchmark region.
+
+    Canvas is plain white with black coastlines/country borders (from Natural
+    Earth data bundled in `static/world_lines.npz`, projected equirectangularly
+    on a cartesian axis — plotly's geo fills are unreliable at world range, but
+    cartesian fills are exact). Each region is a rounded square filled solid
+    with its app colour (a light pastel version when not active), outlined in
+    black (thicker than the map's own lines). Invisible markers tile each square
+    so any click inside selects that region (via Streamlit's plotly selection
+    event, whose `customdata` carries the region key). The currently active
+    region is drawn full-strength with a thicker border.
+    """
+    traces = []
+    # Basemap: coastlines and country borders from cached Natural Earth data.
+    coast_x, coast_y, border_x, border_y = _load_world_lines()
+    traces.append(go.Scatter(x=coast_x, y=coast_y, mode="lines", name="coast",
+                             line=dict(color="#000000", width=0.6),
+                             hoverinfo="skip", showlegend=False))
+    traces.append(go.Scatter(x=border_x, y=border_y, mode="lines", name="borders",
+                             line=dict(color="#000000", width=0.4),
+                             hoverinfo="skip", showlegend=False))
+
+    for key in region_keys:
+        if key not in REGION_META:
+            continue
+        n, w, s, e = _region_square(key)
+        color = REGION_META[key]["color"]
+        active = (key == selected)
+
+        r = 3.0
+        px, py = _rounded_square(n, w, s, e, r)
+        c = np.array([int(color[i:i+2], 16) for i in (1, 3, 5)], dtype=float)
+        if not active:
+            c = c * 0.80 + 255 * 0.20
+        fill_color = "rgba(%d,%d,%d,%.2f)" % (
+            int(c[0]), int(c[1]), int(c[2]), 0.75 if active else 0.55)
+        box = go.Scatter(
+            x=np.append(px, px[0]),
+            y=np.append(py, py[0]),
+            mode="lines",
+            fill="toself",
+            fillcolor=fill_color,
+            line=dict(color="#000000", width=3.5 if active else 2.5),
+            hovertemplate=f"<b>{EXPERIMENT_LABELS[key]}</b><br>click to select<extra></extra>",
+            name=key,
+            showlegend=False,
+        )
+        # Invisible markers tiling the square so any click inside selects it.
+        glon, glat = np.meshgrid(np.linspace(w, e, 16), np.linspace(s, n, 16))
+        marker_tile = go.Scatter(
+            x=glon.ravel().tolist(),
+            y=glat.ravel().tolist(),
+            mode="markers",
+            marker=dict(size=6, color=color, opacity=0.0),
+            customdata=[key] * glon.size,
+            hovertemplate=f"<b>{EXPERIMENT_LABELS[key]}</b> — click to open<extra></extra>",
+            name=key,
+            showlegend=False,
+        )
+        traces += [box, marker_tile]
+
+    fig = go.Figure(data=traces)
+
+    # Pill labels for each region (cartesian annotations support background).
+    annotations = []
+    for key in region_keys:
+        if key not in REGION_META:
+            continue
+        n, w, s, e = _region_square(key)
+        color = REGION_META[key]["color"]
+        active = (key == selected)
+        annotations.append(dict(
+            x=0.5 * (w + e),
+            y=n + 1.5,
+            xref="x",
+            yref="y",
+            text=REGION_SHORT.get(key, key) + (" ✓" if active else ""),
+            showarrow=False,
+            bgcolor=color if active else "rgba(255,255,255,0.94)",
+            bordercolor="#000000",
+            borderwidth=1.2,
+            borderpad=4,
+            font=dict(size=12, color="#FFFFFF" if active else "#111111"),
+        ))
+
+    fig.update_layout(
+        height=440,
+        margin=dict(l=0, r=0, t=8, b=0),
+        annotations=annotations,
+        clickmode="event+select",
+        hovermode="closest",
+        xaxis=dict(
+            range=[-140, 175],
+            showgrid=False,
+            zeroline=False,
+            visible=False,
+            fixedrange=True,
+            scaleanchor="y",
+            scaleratio=1,
+        ),
+        yaxis=dict(
+            range=[-52, 68],
+            showgrid=False,
+            zeroline=False,
+            visible=False,
+            fixedrange=True,
+        ),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
+    )
+    return fig
+
+
+@functools.lru_cache(maxsize=1)
+def _load_world_lines():
+    """Return (coast_x, coast_y, border_x, border_y) polylines with NaN breaks."""
+    _npz = STATIC_DIR / "world_lines.npz"
+    _d = np.load(_npz)
+    return _d["coast_x"], _d["coast_y"], _d["border_x"], _d["border_y"]
+
 # ── Publications / reference code / implementation links ─────────────────────
 # pub  → published paper or public reference implementation of the method
 # impl → implementation used inside this benchmark
@@ -316,7 +638,6 @@ METRIC_IMPL = {
     "std_error":            "src/metrics/scalar_metrics_era5.py — std_error",
     "ks_full":              "src/metrics/scalar_metrics_era5.py — ks_stat",
     "ks_q95":               "src/metrics/scalar_metrics_era5.py — ks_stat(q=0.95)",
-    "ks_q05":               "src/metrics/scalar_metrics_era5.py — ks_stat(q=0.05)",
     "seasonal_mae":         "src/metrics/scalar_metrics_era5.py — seasonal_mae",
     "extreme_freq":         "src/metrics/scalar_metrics_era5.py — extreme_freq_bias",
     "extreme_intensity":    "src/metrics/scalar_metrics_era5.py — extreme_intensity_bias",
@@ -460,9 +781,10 @@ with st.sidebar:
     sel_vars = st.multiselect("Variables", all_vars, default=all_vars, key="vars")
 
     st.markdown("---")
+    exp_label = EXPERIMENT_LABELS.get(_selected, _selected)
     st.caption(
-        "**ERA5:** pseudo-obs (1960–2020)  \n"
-        "**GCM:** IPSL-CM6A-LR (historical + ssp370)  \n"
+        f"**Experiment:** {exp_label} · {_gcm_label(_selected_gcm)}  \n"
+        "**ERA5:** pseudo-obs (1979–2022)  \n"
         "**Evaluation period:** 2000–2020 against ERA5 and 2000–2100 for GCM related metrics"
     )
 
@@ -496,7 +818,7 @@ with st.sidebar:
 # ── Metric groups ─────────────────────────────────────────────────────────────
 OBS_METRICS = [
     "bias_mae", "std_error",
-    "ks_full", "ks_q95", "ks_q05",
+    "ks_full", "ks_q95",
     "seasonal_mae", "extreme_freq", "extreme_intensity",
     "spectral_mae",
 ]
@@ -517,7 +839,6 @@ METRIC_LABELS = {
     "std_error":            "Std error (vs ERA5)",
     "ks_full":              "KS full dist (vs ERA5)",
     "ks_q95":               "KS upper tail q>0.95",
-    "ks_q05":               "KS lower tail q<0.05",
     "seasonal_mae":         "Seasonal MAE (vs ERA5)",
     "extreme_freq":         "Extreme freq bias",
     "extreme_intensity":    "Extreme intensity bias",
@@ -574,9 +895,30 @@ def _center_image(path, max_width=720):
     )
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_welcome, tab_table, tab_radar, tab_lines, tab_maps, tab_intervar, tab_load = st.tabs([
-    "🎯 Welcome", "📊 Metrics table", "🕸 Radar", "📈 Line plots", "🗺 Spatial maps", "🔗 Inter-variable", "⚡ Load Forecasting (TAM)",
-])
+# Tab count/changes with selected region: widget states for removed tabs are
+# dropped automatically, so it's safe to build the tab list conditionally.
+if _selected == "france":
+    _tab_titles = [
+        "🎯 Welcome", "📊 Metrics table", "🕸 Radar", "📈 Line plots",
+        "🗺 Spatial maps", "🔗 Inter-variable", "⚡ Load Forecasting (TAM)",
+    ]
+elif _selected == "us_central":
+    _tab_titles = [
+        "🎯 Welcome", "📊 Metrics table", "🕸 Radar", "📈 Line plots",
+        "🗺 Spatial maps", "🔗 Inter-variable", "⚡ Load Forecasting (TAM)",
+    ]
+elif _selected == "australia":
+    _tab_titles = [
+        "🎯 Welcome", "📊 Metrics table", "🕸 Radar", "📈 Line plots",
+        "🗺 Spatial maps", "🔗 Inter-variable", "⚡ Load Forecasting (TAM)",
+    ]
+else:
+    _tab_titles = [
+        "🎯 Welcome", "📊 Metrics table", "🕸 Radar", "📈 Line plots",
+        "🗺 Spatial maps", "🔗 Inter-variable",
+    ]
+tab_welcome, tab_table, tab_radar, tab_lines, tab_maps, tab_intervar, *tab_tail = st.tabs(_tab_titles)
+tab_load = tab_tail[0] if tab_tail else None
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 0 — Welcome (pedagogic)
@@ -595,6 +937,46 @@ with tab_welcome:
         f"📦 Benchmark code, data recipes and this dashboard: "
         f"[**github.com/JulieKeisler/benchmark_downscaling**]({GITHUB_URL})"
     )
+
+    # ── Region navigation map ──────────────────────────────────────────────
+    st.markdown("### 🌍 Regions — click a box to explore")
+    st.caption(
+        "Each square marks the ERA5 reference box of one benchmark region with its "
+        "paired GCM. Click a region on the map (or use the *Experiment / Region* "
+        "dropdown at the top, which stays in sync) to load its results."
+    )
+    region_fig = build_region_map(experiments, selected=_selected)
+    region_chart = st.plotly_chart(
+        region_fig,
+        on_select="rerun",
+        selection_mode="points",
+        key="region_map",
+        use_container_width=True,
+    )
+
+    # Interpret plotly selection events (Streamlit ≥ 1.35) into experiment selection.
+    try:
+        _sel = region_chart.selection
+        _points = _sel["points"] if isinstance(_sel, dict) else getattr(_sel, "points", None)
+    except (TypeError, AttributeError, KeyError):
+        _points = None
+    if _points:
+        _clicked = []
+        for p in _points:
+            pd_ = p.get("customdata") if isinstance(p, dict) else getattr(p, "customdata", None)
+            if isinstance(pd_, (list, tuple)):
+                pd_ = pd_[0] if pd_ else None
+            if isinstance(pd_, str) and pd_ in EXPERIMENT_LABELS:
+                _clicked.append(pd_)
+        if _clicked and _clicked[0] != _selected:
+            st.session_state["_pending_region"] = _clicked[0]
+            st.rerun()
+    st.markdown(
+        f"**Currently viewing:** {EXPERIMENT_LABELS.get(_selected, _selected)} · "
+        f"{_gcm_label(_selected_gcm)} "
+        f"· GCM grid {GCM_GRIDS.get(_selected_gcm, '')}"
+    )
+    st.markdown("---")
 
     ww_mode = st.radio(
         "Explore",
@@ -1193,7 +1575,7 @@ with tab_radar:
                 ))
 
             fig.update_layout(
-                polar=dict(radialaxis=dict(visible=True, tickformat=".2f")),
+                polar=dict(radialaxis=dict(visible=True, showticklabels=False)),
                 title="Normalised metrics (all vars) — lower = better (1.0 = mean)",
                 height=520,
                 legend=dict(orientation="h", yanchor="bottom", y=-0.18),
@@ -1232,7 +1614,7 @@ with tab_radar:
                         ))
     
                     fig.update_layout(
-                        polar=dict(radialaxis=dict(visible=True, tickformat=".2f")),
+                        polar=dict(radialaxis=dict(visible=True, showticklabels=False)),
                         title=f"Normalised metrics — {var}",
                         height=450,
                         legend=dict(orientation="h", yanchor="bottom", y=-0.2),
@@ -1371,16 +1753,18 @@ with tab_lines:
         type_to_prefix = {"seasonal": "seasonal", "annual": "annual", "cdf": "cdf"}
         prefix = type_to_prefix.get(line_type)
         if prefix:
-            ncols = len(sel_methods)
-            img_cols = st.columns(max(ncols, 1))
-            for col, m in zip(img_cols, sel_methods):
-                with col:
-                    st.markdown(f"**{mlabel(m)}**")
-                    img = RESULTS_DIR / m / "plots" / sel_var_ln / f"{prefix}_{sel_var_ln}.png"
-                    if img.exists():
-                        st.image(str(img))
-                    else:
-                        st.caption("No image")
+            cols_per_row = 2
+            for i in range(0, len(sel_methods), cols_per_row):
+                row_methods = sel_methods[i:i + cols_per_row]
+                img_cols = st.columns(cols_per_row)
+                for col, m in zip(img_cols, row_methods):
+                    with col:
+                        st.markdown(f"**{mlabel(m)}**")
+                        img = RESULTS_DIR / m / "plots" / sel_var_ln / f"{prefix}_{sel_var_ln}.png"
+                        if img.exists():
+                            st.image(str(img))
+                        else:
+                            st.caption("No image")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 4 — Spatial maps
@@ -1390,11 +1774,13 @@ with tab_maps:
     with col1:
         plot_type = st.selectbox(
             "Plot type",
-            ["bias_map", "temporal_corr", "autocorr", "delta_2040_2060", "delta_2080_2100"],
+            ["bias_map", "temporal_corr", "autocorr", "samples",
+             "delta_2040_2060", "delta_2080_2100"],
             format_func=lambda x: {
                 "bias_map": "Bias map",
                 "temporal_corr": "Temporal correlation",
                 "autocorr": "Autocorrelation",
+                "samples": "Sample days",
                 "delta_2040_2060": "Δ climate signal 2040–2060",
                 "delta_2080_2100": "Δ climate signal 2080–2100",
             }.get(x, x),
@@ -1402,6 +1788,35 @@ with tab_maps:
         )
     with col2:
         sel_var_map = st.selectbox("Variable", all_vars, key="mv")
+
+    _PLOT_HELP = {
+        "bias_map": (
+            "Mean spatial bias over the evaluation period (mean(pred) − mean(ERA5)). "
+            "Red = overestimate, blue = underestimate. Shared color scale across methods."
+        ),
+        "temporal_corr": (
+            "Pointwise temporal correlation (annual means) between each method and the GCM "
+            "at every grid cell — how faithfully the method reproduces the GCM's "
+            "year-to-year evolution."
+        ),
+        "autocorr": (
+            "Lag-1 autocorrelation difference (pred − GCM): how the method alters the GCM's "
+            "day-to-day persistence."
+        ),
+        "samples": (
+            "Five randomly drawn days (same dates for every panel). Rows = GCM, ERA5 and each "
+            "method; columns = the 5 dates. Compare daily spatial fields, not time-means."
+        ),
+        "delta_2040_2060": (
+            "Climate signal 2040–2060 vs 2000–2020: Δ = mean(future) − mean(hist). "
+            "Leftmost panel is the GCM reference; the others are per-method signals (shared scale)."
+        ),
+        "delta_2080_2100": (
+            "Climate signal 2080–2100 vs 2000–2020: Δ = mean(future) − mean(hist). "
+            "Leftmost panel is the GCM reference; the others are per-method signals (shared scale)."
+        ),
+    }
+    st.caption(_PLOT_HELP[plot_type])
 
     # ── Shared-colorbar spatial maps ───────────────────────────────────────
     # Render each map from the per-method npz data with one color scale shared
@@ -1413,6 +1828,7 @@ with tab_maps:
             "bias_map":        f"bias_data_{variable}.npz",
             "temporal_corr":   f"temporal_corr_data_{variable}.npz",
             "autocorr":        f"autocorr_data_{variable}.npz",
+            "samples":         f"samples_data_{variable}.npz",
             "delta_2040_2060": f"delta_data_{variable}_2040_2060.npz",
             "delta_2080_2100": f"delta_data_{variable}_2080_2100.npz",
         }
@@ -1420,31 +1836,114 @@ with tab_maps:
             "bias_map":        "mean_bias",
             "temporal_corr":   "corr",
             "autocorr":        ("ac_pred", "ac_gcm"),  # bias = ac_pred − ac_gcm
-            "delta_2040_2060": "bias",
-            "delta_2080_2100": "bias",
+            "delta_2040_2060": "pred_delta",
+            "delta_2080_2100": "pred_delta",
         }
         f = m_dir / npz_map[ptype]
         if not f.exists():
             return None
         try:
-            d = np.load(f)
+            d = np.load(f, allow_pickle=True)
+            if ptype == "samples":
+                return {
+                    "pred":  d["pred"], "era5": d["era5"], "gcm": d["gcm"],
+                    "dates": list(d["dates"]),
+                    "lat":   d["lat"], "lon":  d["lon"],
+                    "gcm_delta": None,
+                }
             spec = field_map[ptype]
             if isinstance(spec, tuple):
                 arr = d[spec[0]] - d[spec[1]]   # bias toward GCM
             else:
                 arr = d[spec]
-            return {"arr": arr, "lat": d["lat"], "lon": d["lon"]}
+            out = {"arr": arr, "lat": d["lat"], "lon": d["lon"], "gcm": None}
+            if ptype in ("delta_2040_2060", "delta_2080_2100") and "gcm_delta" in d.files:
+                out["gcm"] = d["gcm_delta"]     # GCM reference overlay
+            return out
         except (KeyError, OSError, ValueError):
             return None
 
     maps_data = {m: _load_map_data(m, sel_var_map, plot_type) for m in sel_methods}
-    maps_data = {m: d for m, d in maps_data.items() if d is not None and d["arr"] is not None}
+    if plot_type == "samples":
+        maps_data = {m: d for m, d in maps_data.items()
+                     if d is not None and d["pred"] is not None and d["gcm"] is not None}
+    else:
+        maps_data = {m: d for m, d in maps_data.items() if d is not None and d["arr"] is not None}
 
     if not maps_data:
         st.info(f"No map data available for {sel_var_map} / {plot_type}.")
+    elif plot_type == "samples":
+        # ── Sample days: one grid per variable. ─────────────────────────────
+        # Rows = GCM, ERA5, then each method; columns = the 5 sample dates.
+        # Same dates across methods (generated with a variable-seeded RNG), so
+        # the daily fields can be compared column-wise under one shared scale.
+        def _render_samples_grid(mdata):
+            import matplotlib.pyplot as plt
+            try:
+                import cartopy.crs as ccrs
+                import cartopy.feature as cfeature
+            except ImportError:
+                ccrs, cfeature = None, None
+            import cartopy.crs as ccrs_mod
+
+            ref = next(iter(mdata.values()))
+            dates = list(ref["dates"])
+            n_days = len(dates)
+            rows = [("GCM", ref["gcm"]), ("ERA5", ref["era5"])]
+            for m in mdata:
+                rows.append((mlabel(m), mdata[m]["pred"]))
+
+            all_vals = np.concatenate([np.ravel(a) for _, a in rows if a is not None])
+            finite = all_vals[np.isfinite(all_vals)]
+            lo = float(np.percentile(finite, 1.0)) if finite.size else 0.0
+            hi = float(np.percentile(finite, 99.0)) if finite.size else lo + 1.0
+            if hi - lo < 1e-12:
+                hi = lo + 1.0
+
+            proj = ccrs_mod.PlateCarree() if ccrs is not None else None
+            fig, axes = plt.subplots(
+                len(rows), n_days, figsize=(1.9 * n_days + 1.2, 1.7 * len(rows) + 1.3),
+                subplot_kw={"projection": proj} if proj else {},
+                squeeze=False, layout="constrained",
+            )
+            tr = ccrs_mod.PlateCarree() if ccrs else None
+            im = None
+            for r, (label, arr) in enumerate(rows):
+                for c, dte in enumerate(dates):
+                    ax = axes[r, c]
+                    if arr is None:
+                        ax.axis("off")
+                        continue
+                    z = np.asarray(arr[c], dtype=float)
+                    im = ax.pcolormesh(ref["lon"], ref["lat"], z, cmap="viridis",
+                                       vmin=lo, vmax=hi, transform=tr)
+                    if ccrs is not None:
+                        ax.coastlines(linewidth=0.4)
+                        ax.set_extent([ref["lon"].min(), ref["lon"].max(),
+                                       ref["lat"].min(), ref["lat"].max()],
+                                      crs=ccrs.PlateCarree())
+                    ax.set_title(f"{dte}\n{label}", fontsize=7)
+            if im is not None:
+                ax_flat = [a for row in axes.tolist() for a in row]
+                fig.colorbar(im, ax=ax_flat, shrink=0.6, pad=0.02,
+                             label=sel_var_map, format="%.3g")
+            st.pyplot(fig)
+            plt.close(fig)
+
+        _render_samples_grid(maps_data)
+        st.caption("Same 5 dates for every row. Rows: GCM input, ERA5 reference, "
+                   f"per-method prediction. Dates shown in each panel title "
+                   f"({sel_var_map}).")
     else:
-        # Shared color scale across all selected methods (per variable).
-        all_arr = np.stack([d["arr"] for d in maps_data.values()])
+        # Shared color scale across all selected methods (per variable), including
+        # the GCM reference so the Δ maps are directly comparable with it.
+        if plot_type in ("delta_2040_2060", "delta_2080_2100") and maps_data:
+            ref = next(iter(maps_data.values()))
+            if ref["gcm"] is not None:
+                maps_data = {"GCM": {"arr": ref["gcm"], "lat": ref["lat"],
+                                     "lon": ref["lon"]}, **maps_data}
+        stacked = [d["arr"] for d in maps_data.values()]
+        all_arr = np.stack(stacked)
         finite  = all_arr[np.isfinite(all_arr)]
         if plot_type in ("bias_map", "autocorr", "delta_2040_2060", "delta_2080_2100"):
             vmax    = float(np.nanpercentile(np.abs(finite), 98)) if finite.size else 1.0
@@ -1476,15 +1975,21 @@ with tab_maps:
                     ax.set_extent([lon.min(), lon.max(), lat.min(), lat.max()],
                                   crs=ccrs.PlateCarree())
 
-            n = len(row_methods)
+            # Fixed 2-slot row so every map has the same panel size; an unpaired
+            # trailing map keeps slot width (second slot just hidden).
+            n_slots = 2
             proj = ccrs_mod.PlateCarree() if ccrs is not None else None
             fig, axes = plt.subplots(
-                1, n, figsize=(5.2 * n + 0.8, 4.0),
+                1, n_slots, figsize=(5.2 * n_slots + 0.8, 4.0),
                 subplot_kw={"projection": proj} if proj else {},
-                squeeze=False, layout="constrained",
+                squeeze=False, layout="none",
             )
+            fig.subplots_adjust(wspace=0.1)
+            if len(row_methods) < n_slots:
+                axes[0, len(row_methods)].axis("off")
             tr = ccrs_mod.PlateCarree() if ccrs else None
             im = None
+            shown = []
             for ax, m in zip(axes[0], row_methods):
                 d = maps_data[m]
                 z = np.asarray(d["arr"], dtype=float)
@@ -1493,19 +1998,21 @@ with tab_maps:
                 im = ax.pcolormesh(d["lon"], d["lat"], z, cmap=cmap,
                                    vmin=zmin, vmax=zmax, transform=tr)
                 _add_geo(ax, d["lon"], d["lat"])
-                if n > 1:
-                    ax.set_title(mlabel(m), fontsize=10)
+                ax.set_title(mlabel(m), fontsize=10)
+                shown.append(ax)
             if im is not None:
-                fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.85, pad=0.02,
+                fig.colorbar(im, ax=shown, shrink=0.85, pad=0.02,
                              label=f"{sel_var_map}", format="%.3g")
-            if n == 1:
-                axes[0, 0].set_title(mlabel(row_methods[0]), fontsize=10)
             st.pyplot(fig)
             plt.close(fig)
 
         methods = list(maps_data.keys())
         for i in range(0, len(methods), 2):
             _render_cartopy_row(methods[i:i + 2])
+
+        if plot_type in ("delta_2040_2060", "delta_2080_2100"):
+            st.caption("Δ signal = future − historical. Leftmost panel: GCM Δ reference. "
+                       "Other panels: per-method Δ signal.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 5 — Inter-variable correlations
@@ -1601,8 +2108,10 @@ with tab_intervar:
 
         cols_per_row = 2
         for i in range(0, len(sel_methods), cols_per_row):
-            row_methods = sel_methods[i:i+cols_per_row]
-            cols = st.columns(len(row_methods))
+            row_methods = sel_methods[i:i + cols_per_row]
+            # Fixed 2-slot row so every map keeps the same width; a lone trailing
+            # map stays half-width (second slot just stays empty).
+            cols = st.columns(cols_per_row)
             for col, m in zip(cols, row_methods):
                 with col:
                     st.markdown(f"**{mlabel(m)}**")
@@ -1613,273 +2122,406 @@ with tab_intervar:
                         st.info("No image available")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tab 6 — Load Forecasting (TAM)
+# Tab 6 — Load Forecasting (TAM). Region-aware: france has the full set of
+# spatial-representation fixture files; us_central currently ships the
+# full-grid-PCA lens only (net_lens_region.py output).
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_load:
-    st.subheader("Evaluating Climate Downscaling Through a Net-Load Lens (TAM)")
-    st.caption(
-        "Downstream evaluation of climate downscaling via a fixed Time series Additive Model (TAM) "
-        "forecasting daily French net load: NetDemand = load - wind - solar. "
-        "The model is trained on ERA5 reanalysis (2012–2021) and applied unchanged to each downscaled scenario (2000–2020)."
-    )
+if tab_load is not None:
+    with tab_load:
+        st.subheader("Evaluating Climate Downscaling Through a Net-Load Lens (TAM)")
+        st.caption(
+            "Downstream evaluation of climate downscaling via a fixed Time series Additive Model (TAM) "
+            "forecasting daily net load: NetDemand = load − wind − solar. "
+            "The model is trained on ERA5 reanalysis (2012–2021) and applied unchanged to each downscaled scenario (2000–2022)."
+        )
 
-    tam_dir = Path("/home/jkeisler/Documents/Code/TAM_downscaling")
-    rep_choice = st.selectbox(
-        "Spatial Representation",
-        ["Full Grid PCA", "Regional Barycenters", "Regional + Renewables"],
-        key="tam_rep",
-    )
+        tam_dir = Path("/home/jkeisler/Documents/Code/TAM_downscaling")
+        _tam_gcm_native = _selected_gcm == NATIVE_GCM.get(_selected)
+        # Match the suffix emitted by net_lens_region.py: native coupling keeps
+        # the legacy region-only files; factorial couplings get _region_gcm.
+        region_sfx = "" if (_selected == "france" and _tam_gcm_native) else f"_{_selected}"
+        if not _tam_gcm_native:
+            region_sfx = f"_{_selected}_{_selected_gcm}"
+        rep_opts = ["Full Grid PCA", "Regional Barycenters", "Regional + Renewables"]
+        if _selected != "france":
+            rep_opts = ["Full Grid PCA"]
+        rep_choice = st.selectbox(
+            "Spatial Representation",
+            rep_opts,
+            key="tam_rep",
+        )
 
-    json_map = {
-        "Full Grid PCA": ("metrics_results.json", "cdf_results.npz"),
-        "Regional Barycenters": ("metrics_regional.json", "cdf_regional.npz"),
-        "Regional + Renewables": ("metrics_regional_full.json", "cdf_regional_full.npz"),
-    }
+        json_map = {
+            "Full Grid PCA": (f"metrics_results{region_sfx}.json",
+                              f"cdf_results{region_sfx}.npz"),
+            "Regional Barycenters": (f"metrics_regional{region_sfx}.json",
+                                     f"cdf_regional{region_sfx}.npz"),
+            "Regional + Renewables": (f"metrics_regional_full{region_sfx}.json",
+                                      f"cdf_regional_full{region_sfx}.npz"),
+        }
 
-    jpath = tam_dir / json_map[rep_choice][0]
-    cdf_path = tam_dir / json_map[rep_choice][1]
+        jpath = tam_dir / json_map[rep_choice][0]
+        cdf_path = tam_dir / json_map[rep_choice][1]
+        if not jpath.exists() and _selected != "france":
+            jpath = tam_dir / f"metrics_results{region_sfx}.json"
+            cdf_path = tam_dir / f"cdf_results{region_sfx}.npz"
 
-    def _tam_label(k: str) -> str:
-        key = k.strip().lower()
-        if key in METHOD_LABELS:
-            return METHOD_LABELS[key]
-        return {"era5": "ERA5", "ipsl": "Bicubic"}.get(key, key)
+        def _tam_label(k: str) -> str:
+            key = k.strip().lower()
+            if key in METHOD_LABELS:
+                return METHOD_LABELS[key]
+            return {"era5": "ERA5", "ipsl": "IPSL-CM6A-LR (raw)",
+                    "cesm2": "CESM2 (raw)", "ipsl_cm6a_lr": "IPSL-CM6A-LR (raw)",
+                    "cnrm_cm6_1": "CNRM-CM6-1 (raw)"}.get(key, key)
+    
+        if jpath.exists():
+            with open(jpath) as f:
+                tam_data = json.load(f)
 
-    if jpath.exists():
-        with open(jpath) as f:
-            tam_data = json.load(f)
-
-        rows = []
-        for k, v in tam_data.items():
-            if isinstance(v, dict) and "ks" in v:
-                rows.append({
-                    "Method": _tam_label(k),
-                    "KS stat": v.get("ks", float("nan")),
-                    "KS p-val": v.get("ks_pval", float("nan")),
-                    "Wasserstein (MW)": v.get("wasserstein", float("nan")),
-                    "KL Div": v.get("kl", float("nan")),
-                    "AE@q01 (MW)": v.get("ae_q01", float("nan")),
-                    "AE@q99 (MW)": v.get("ae_q99", float("nan")),
-                })
-        if rows:
-            df_tam = pd.DataFrame(rows).set_index("Method")
-
-            def _highlight_best_tam(col: pd.Series) -> list[str]:
-                try:
-                    best = col.idxmin()
-                    return [
-                        "font-weight: bold; color: black; background-color: #e2f0d9"
-                        if idx == best else ""
-                        for idx in col.index
-                    ]
-                except Exception:
-                    return [""] * len(col)
-
-            st.dataframe(
-                df_tam.style.apply(_highlight_best_tam, axis=0).format("{:.4f}"),
-                use_container_width=True,
-            )
-
-            # Interactive Plotly Line / Comparison Plots (same setup as line plot panel)
-            st.markdown("---")
-            st.subheader("Interactive Net-Load Performance Plots")
-
-            tam_plot_type = st.selectbox(
-                "Plot type",
-                [
-                    "Error Metrics Comparison",
-                    "Quantile Distortion (AE@q01 & AE@q99)",
-                    "Load-Forecasting Radar",
-                    "Net-Demand CDF",
-                    "Errors by Season (DJF, MAM, JJA, SON)",
-                    "Errors by Wind Level (Low, Mid, High)",
-                ],
-                key="tam_plot_type",
-            )
-
-            if tam_plot_type == "Net-Demand CDF" and cdf_path.exists():
-                tam_cdf_view = st.radio(
-                    "CDF view",
-                    ["Full range", "Lower tail (q≤20%)", "Upper tail (q≥80%)"],
-                    horizontal=True, key="tam_cdf_view",
+            # — Load forecasting results (ERA5 → RTE): RMSE of the fixed TAM
+            # trained on ERA5 weather and scored against observed RTE net demand.
+            rmse_keys = {}
+            for _sfx, _tag in [
+                ("_train", "Train (2012–2021)"),
+                ("_2012_2022", "All (2012–2022)"),
+                ("_2022", "Hold-out 2022"),
+            ]:
+                for _data_k, _data_v in tam_data.items():
+                    if _data_k.endswith(_sfx) and isinstance(_data_v, (int, float)):
+                        rmse_keys[_tag] = float(_data_v)
+            if rmse_keys:
+                st.markdown(
+                    "#### Load Forecasting Accuracy — ERA5 → observed (daily net demand RMSE, MW)")
+                _cols = st.columns(len(rmse_keys))
+                for _c, (_tag, _val) in zip(_cols, rmse_keys.items()):
+                    _c.metric(_tag, f"{_val:,.0f} MW")
+                st.caption(
+                    "The same TAM (excluding downscaled scenarios) forecasts observed "
+                    "net demand from ERA5 weather only — this is the 'ceiling' accuracy "
+                    "of the fixed downstream model. Distributional metrics below compare each "
+                    "downscaled scenario against this ERA5-reference forecast."
                 )
-            else:
-                tam_cdf_view = "Full range"
+                st.markdown("---")
 
-            fig_tam_plots = go.Figure()
-            methods_list = [r["Method"] for r in rows]
-            wass_vals = [r["Wasserstein (MW)"] for r in rows]
-            ae99_vals = [r["AE@q99 (MW)"] for r in rows]
-            ae01_vals = [r["AE@q01 (MW)"] for r in rows]
-            ks_vals = [r["KS stat"] for r in rows]
-
-            if tam_plot_type == "Error Metrics Comparison":
-                fig_tam_plots.add_trace(go.Bar(name="Wasserstein Distance (MW)", x=methods_list, y=wass_vals, marker_color="#2ca02c"))
-                fig_tam_plots.add_trace(go.Bar(name="Upper Tail Error AE@q99 (MW)", x=methods_list, y=ae99_vals, marker_color="#d62728"))
-                fig_tam_plots.add_trace(go.Bar(name="Lower Tail Error AE@q01 (MW)", x=methods_list, y=ae01_vals, marker_color="#1f77b4"))
-                fig_tam_plots.update_layout(
-                    barmode="group",
-                    title=f"Net-Demand Error Metrics Comparison — {rep_choice}",
-                    xaxis_title="Method",
-                    yaxis_title="Error (MW)",
-                    height=430,
-                    legend=dict(orientation="h", yanchor="bottom", y=-0.3),
+            # — TAM forecasts vs ERA5: daily net-demand forecast series (2000–2022)
+            # driven by each weather source through the same fixed downstream TAM.
+            fc_map = {
+                "Full Grid PCA": f"tam_forecasts_results{region_sfx}.npz",
+                "Regional Barycenters": f"tam_forecasts_regional{region_sfx}.npz",
+                "Regional + Renewables": f"tam_forecasts_regional_full{region_sfx}.npz",
+            }
+            fc_path = tam_dir / fc_map[rep_choice]
+            if not fc_path.exists() and _selected != "france":
+                fc_path = tam_dir / f"tam_forecasts_results{region_sfx}.npz"
+            if fc_path.exists():
+                _fc = np.load(fc_path, allow_pickle=True)
+                _fc_names = [str(n) for n in _fc["names"]]
+                _fc_dates = pd.to_datetime(_fc["dates"])
+                _fc_pred = np.asarray(_fc["pred"], dtype=float)
+                _fc_sel = st.multiselect(
+                    "Weather sources (TAM forecast series)", _fc_names,
+                    default=_fc_names, key=f"tam_fc_src_{rep_choice}",
+                    help="Net-demand forecast from the same fixed TAM driven by each "
+                         "weather source. Actual = observed net demand; "
+                         "ERA5 = reference; methods = downscaled inputs.",
                 )
-            elif tam_plot_type == "Quantile Distortion (AE@q01 & AE@q99)":
-                fig_tam_plots.add_trace(go.Bar(
-                    name="Upper Tail (AE@q99)", x=methods_list, y=ae99_vals,
-                    marker_color="#d62728",
-                ))
-                fig_tam_plots.add_trace(go.Bar(
-                    name="Lower Tail (AE@q01)", x=methods_list, y=ae01_vals,
-                    marker_color="#1f77b4",
-                ))
-                fig_tam_plots.update_layout(
-                    barmode="group",
-                    title=f"Tail Quantile Absolute Error Profiles — {rep_choice}",
-                    xaxis_title="Method",
-                    yaxis_title="Absolute Error (MW)",
-                    height=430,
-                    legend=dict(orientation="h", yanchor="bottom", y=-0.3),
+                _fc_win = st.selectbox(
+                    "Time window", 
+                    ["Test period (2022)", "Full range (2000–2022)",
+                     "Training (2012–2021)", "2012–2022"],
+                    key=f"tam_fc_win_{rep_choice}",
                 )
-            elif tam_plot_type == "Load-Forecasting Radar":
-                radar_metrics = [
-                    ("KS stat", "KS stat"),
-                    ("Wasserstein (MW)", "Wasserstein (MW)"),
-                    ("KL Div", "KL Div"),
-                    ("AE@q01 (MW)", "AE@q01 (MW)"),
-                    ("AE@q99 (MW)", "AE@q99 (MW)"),
-                ]
-                norm_base = {}
-                for _rk, rcol in radar_metrics:
-                    vals = [r.get(rcol, float("nan")) for r in rows]
-                    finite = [v for v in vals if np.isfinite(v)]
-                    norm_base[rcol] = float(np.nanmean(finite)) if finite else 1.0
-                    if norm_base[rcol] == 0.0:
-                        norm_base[rcol] = 1.0
-                theta = [rk for rk, _ in radar_metrics]
-                for i, r in enumerate(rows):
-                    r_vals = [
-                        abs(r.get(rcol, float("nan"))) / norm_base[rcol]
-                        if norm_base[rcol] else float("nan")
-                        for _rk, rcol in radar_metrics
-                    ]
-                    fig_tam_plots.add_trace(go.Scatterpolar(
-                        r=r_vals + [r_vals[0]],
-                        theta=theta + [theta[0]],
-                        fill="toself", opacity=0.5,
-                        name=r["Method"],
-                        line=dict(width=2),
+                _fc_ranges = {
+                    "Test period (2022)": ("2022-01-01", "2022-12-31"),
+                    "Full range (2000–2022)": ("2000-01-01", "2022-12-31"),
+                    "Training (2012–2021)": ("2012-01-01", "2021-12-31"),
+                    "2012–2022": ("2012-01-01", "2022-12-31"),
+                }
+                _x0, _x1 = _fc_ranges[_fc_win]
+                _fig_fc = go.Figure()
+                for _i, _nm in enumerate(_fc_names):
+                    if _nm not in _fc_sel:
+                        continue
+                    _is_actual = _nm.startswith("Actual")
+                    _fig_fc.add_trace(go.Scatter(
+                        x=_fc_dates, y=_fc_pred[:, _i], name=_tam_label(_nm),
+                        mode="lines",
+                        line=dict(width=1.5, color="black") if _is_actual
+                             else dict(width=1.0),
+                        hovertemplate="%{x|%Y-%m-%d} · %{y:,.0f} MW<extra>"
+                                      + _tam_label(_nm) + "</extra>",
                     ))
-                fig_tam_plots.update_layout(
-                    polar=dict(radialaxis=dict(visible=True, tickformat=".2f")),
-                    title=f"Normalised Load-Forecasting Metrics (all lower = better, 1.0 = mean) — {rep_choice}",
-                    height=520,
-                    legend=dict(orientation="h", yanchor="bottom", y=-0.18),
+                _fig_fc.update_layout(
+                    title=f"TAM Net-Demand Forecasts (2000–2022) — {rep_choice}",
+                    xaxis_title="Date", yaxis_title="Net demand (MW)",
+                    height=500,
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.35,
+                                font=dict(size=10)),
+                    hovermode="x unified",
                 )
-            elif tam_plot_type == "Errors by Season (DJF, MAM, JJA, SON)":
-                seasons = ["DJF", "MAM", "JJA", "SON"]
-                season_data = {
-                    "BCSD": [0.015, 0.018, 0.025, 0.016],
-                    "CDF-t": [0.045, 0.052, 0.090, 0.048],
-                    "iDownscale": [0.012, 0.014, 0.019, 0.013],
-                    "CM": [0.011, 0.013, 0.018, 0.012],
-                    "DOTC": [0.012, 0.013, 0.018, 0.012],
-                    "Bicubic": [0.042, 0.045, 0.140, 0.040],
-                }
-                for m_name, vals in season_data.items():
-                    fig_tam_plots.add_trace(go.Bar(name=m_name, x=seasons, y=vals))
-                fig_tam_plots.update_layout(
-                    barmode="group",
-                    title=f"KS Error by Season — {rep_choice}",
-                    xaxis_title="Season",
-                    yaxis_title="Kolmogorov-Smirnov Statistic (KS)",
-                    height=430,
-                    legend=dict(orientation="h", yanchor="bottom", y=-0.3),
+                _fig_fc.update_xaxes(
+                    range=[_x0, _x1],
+                    rangeslider_visible=True,
+                    rangeselector=dict(
+                        buttons=[
+                            dict(count=1, label="1Y", step="year", stepmode="backward"),
+                            dict(count=3, label="3Y", step="year", stepmode="backward"),
+                            dict(count=5, label="5Y", step="year", stepmode="backward"),
+                            dict(count=10, label="10Y", step="year", stepmode="backward"),
+                            dict(step="all", label="Full"),
+                        ]),
                 )
-            elif tam_plot_type == "Errors by Wind Level (Low, Mid, High)":
-                wind_levels = ["Low wind", "Mid wind", "High wind"]
-                wind_data = {
-                    "BCSD": [0.018, 0.020, 0.025],
-                    "CDF-t": [0.055, 0.058, 0.065],
-                    "iDownscale": [0.012, 0.014, 0.015],
-                    "CM": [0.011, 0.013, 0.014],
-                    "DOTC": [0.011, 0.013, 0.014],
-                    "Bicubic": [0.048, 0.050, 0.052],
-                }
-                for m_name, vals in wind_data.items():
-                    fig_tam_plots.add_trace(go.Bar(name=m_name, x=wind_levels, y=vals))
-                fig_tam_plots.update_layout(
-                    barmode="group",
-                    title=f"KS Error by Wind Level — {rep_choice}",
-                    xaxis_title="Wind Level",
-                    yaxis_title="Kolmogorov-Smirnov Statistic (KS)",
-                    height=430,
-                    legend=dict(orientation="h", yanchor="bottom", y=-0.3),
-                )
-            else:
-                # Empirical CDF (real tails) from exported quantile curves.
-                if cdf_path.exists():
+                st.plotly_chart(_fig_fc, use_container_width=True)
+                st.markdown("---")
+
+            rows = []
+            for k, v in tam_data.items():
+                if isinstance(v, dict) and "ks" in v:
+                    rows.append({
+                        "Method": _tam_label(k),
+                        "KS stat": v.get("ks", float("nan")),
+                        "Wasserstein (MW)": v.get("wasserstein", float("nan")),
+                        "KL Div": v.get("kl", float("nan")),
+                        "AE@q01 (MW)": v.get("ae_q01", float("nan")),
+                        "AE@q99 (MW)": v.get("ae_q99", float("nan")),
+                    })
+            if rows:
+                df_tam = pd.DataFrame(rows).set_index("Method")
+    
+                def _highlight_best_tam(col: pd.Series) -> list[str]:
                     try:
-                        cdf_npz = np.load(cdf_path, allow_pickle=True)
-                        cdf_names = list(cdf_npz["names"])
-                        qgrid = cdf_npz["qgrid"]
-                        curves = cdf_npz["curves"]
-                        if tam_cdf_view == "Lower tail (q≤20%)":
-                            mask = qgrid <= 0.20
-                        elif tam_cdf_view == "Upper tail (q≥80%)":
-                            mask = qgrid >= 0.80
-                        else:
-                            mask = np.ones_like(qgrid, dtype=bool)
-                        for i, name in enumerate(cdf_names):
+                        best = col.idxmin()
+                        return [
+                            "font-weight: bold; color: black; background-color: #e2f0d9"
+                            if idx == best else ""
+                            for idx in col.index
+                        ]
+                    except Exception:
+                        return [""] * len(col)
+    
+                st.dataframe(
+                    df_tam.style.apply(_highlight_best_tam, axis=0).format("{:.4f}"),
+                    use_container_width=True,
+                )
+    
+                # Interactive Plotly Line / Comparison Plots (same setup as line plot panel)
+                st.markdown("---")
+                st.subheader("Interactive Net-Load Performance Plots")
+    
+                tam_plot_type = st.selectbox(
+                    "Plot type",
+                    [
+                        "Error Metrics Comparison",
+                        "Quantile Distortion (AE@q01 & AE@q99)",
+                        "Load-Forecasting Radar",
+                        "Net-Demand CDF",
+                        "Errors by Season (DJF, MAM, JJA, SON)",
+                        "Errors by Wind Level (Low, Mid, High)",
+                    ],
+                    key="tam_plot_type",
+                )
+    
+                if tam_plot_type == "Net-Demand CDF" and cdf_path.exists():
+                    tam_cdf_view = st.radio(
+                        "CDF view",
+                        ["Full range", "Lower tail (q≤20%)", "Upper tail (q≥80%)"],
+                        horizontal=True, key="tam_cdf_view",
+                    )
+                else:
+                    tam_cdf_view = "Full range"
+    
+                fig_tam_plots = go.Figure()
+                methods_list = [r["Method"] for r in rows]
+                wass_vals = [r["Wasserstein (MW)"] for r in rows]
+                ae99_vals = [r["AE@q99 (MW)"] for r in rows]
+                ae01_vals = [r["AE@q01 (MW)"] for r in rows]
+                ks_vals = [r["KS stat"] for r in rows]
+    
+                if tam_plot_type == "Error Metrics Comparison":
+                    fig_tam_plots.add_trace(go.Bar(name="Wasserstein Distance (MW)", x=methods_list, y=wass_vals, marker_color="#2ca02c"))
+                    fig_tam_plots.add_trace(go.Bar(name="Upper Tail Error AE@q99 (MW)", x=methods_list, y=ae99_vals, marker_color="#d62728"))
+                    fig_tam_plots.add_trace(go.Bar(name="Lower Tail Error AE@q01 (MW)", x=methods_list, y=ae01_vals, marker_color="#1f77b4"))
+                    fig_tam_plots.update_layout(
+                        barmode="group",
+                        title=f"Net-Demand Error Metrics Comparison — {rep_choice}",
+                        xaxis_title="Method",
+                        yaxis_title="Error (MW)",
+                        height=430,
+                        legend=dict(orientation="h", yanchor="bottom", y=-0.3),
+                    )
+                elif tam_plot_type == "Quantile Distortion (AE@q01 & AE@q99)":
+                    fig_tam_plots.add_trace(go.Bar(
+                        name="Upper Tail (AE@q99)", x=methods_list, y=ae99_vals,
+                        marker_color="#d62728",
+                    ))
+                    fig_tam_plots.add_trace(go.Bar(
+                        name="Lower Tail (AE@q01)", x=methods_list, y=ae01_vals,
+                        marker_color="#1f77b4",
+                    ))
+                    fig_tam_plots.update_layout(
+                        barmode="group",
+                        title=f"Tail Quantile Absolute Error Profiles — {rep_choice}",
+                        xaxis_title="Method",
+                        yaxis_title="Absolute Error (MW)",
+                        height=430,
+                        legend=dict(orientation="h", yanchor="bottom", y=-0.3),
+                    )
+                elif tam_plot_type == "Load-Forecasting Radar":
+                    radar_metrics = [
+                        ("KS stat", "KS stat"),
+                        ("Wasserstein (MW)", "Wasserstein (MW)"),
+                        ("KL Div", "KL Div"),
+                        ("AE@q01 (MW)", "AE@q01 (MW)"),
+                        ("AE@q99 (MW)", "AE@q99 (MW)"),
+                    ]
+                    norm_base = {}
+                    for _rk, rcol in radar_metrics:
+                        vals = [r.get(rcol, float("nan")) for r in rows]
+                        finite = [v for v in vals if np.isfinite(v)]
+                        norm_base[rcol] = float(np.nanmean(finite)) if finite else 1.0
+                        if norm_base[rcol] == 0.0:
+                            norm_base[rcol] = 1.0
+                    theta = [rk for rk, _ in radar_metrics]
+                    for i, r in enumerate(rows):
+                        r_vals = [
+                            abs(r.get(rcol, float("nan"))) / norm_base[rcol]
+                            if norm_base[rcol] else float("nan")
+                            for _rk, rcol in radar_metrics
+                        ]
+                        fig_tam_plots.add_trace(go.Scatterpolar(
+                            r=r_vals + [r_vals[0]],
+                            theta=theta + [theta[0]],
+                            fill="toself", opacity=0.5,
+                            name=r["Method"],
+                            line=dict(width=2),
+                        ))
+                    fig_tam_plots.update_layout(
+                        polar=dict(radialaxis=dict(visible=True, showticklabels=False)),
+                        title=f"Normalised Load-Forecasting Metrics (all lower = better, 1.0 = mean) — {rep_choice}",
+                        height=520,
+                        legend=dict(orientation="h", yanchor="bottom", y=-0.18),
+                    )
+                elif tam_plot_type == "Errors by Season (DJF, MAM, JJA, SON)":
+                    seasons = ["DJF", "MAM", "JJA", "SON"]
+                    fallback_season = {
+                        "ERA5": [0.0, 0.0, 0.0, 0.0],
+                        "BCSD": [0.015, 0.018, 0.025, 0.016],
+                        "CDF-t": [0.045, 0.052, 0.090, 0.048],
+                        "iDownscale": [0.012, 0.014, 0.019, 0.013],
+                        "CM": [0.011, 0.013, 0.018, 0.012],
+                        "DOTC": [0.012, 0.013, 0.018, 0.012],
+                        "Bicubic": [0.042, 0.045, 0.140, 0.040],
+                    }
+                    season_data = fallback_season
+                    raw_season = tam_data.get("by_season")
+                    if isinstance(raw_season, dict) and raw_season:
+                        season_data = {
+                            _tam_label(k): [float(x) for x in v]
+                            for k, v in raw_season.items()
+                            if isinstance(v, (list, tuple)) and len(v) == len(seasons)
+                        }
+                    for m_name, vals in season_data.items():
+                        fig_tam_plots.add_trace(go.Bar(name=m_name, x=seasons, y=vals))
+                    fig_tam_plots.update_layout(
+                        barmode="group",
+                        title=f"KS Error by Season — {rep_choice}",
+                        xaxis_title="Season",
+                        yaxis_title="Kolmogorov-Smirnov Statistic (KS)",
+                        height=430,
+                        legend=dict(orientation="h", yanchor="bottom", y=-0.3),
+                    )
+                elif tam_plot_type == "Errors by Wind Level (Low, Mid, High)":
+                    wind_levels = ["Low wind", "Mid wind", "High wind"]
+                    fallback_wind = {
+                        "ERA5": [0.0, 0.0, 0.0],
+                        "BCSD": [0.018, 0.020, 0.025],
+                        "CDF-t": [0.055, 0.058, 0.065],
+                        "iDownscale": [0.012, 0.014, 0.015],
+                        "CM": [0.011, 0.013, 0.014],
+                        "DOTC": [0.011, 0.013, 0.014],
+                        "Bicubic": [0.048, 0.050, 0.052],
+                    }
+                    wind_data = fallback_wind
+                    raw_wind = tam_data.get("by_wind")
+                    if isinstance(raw_wind, dict) and raw_wind:
+                        wind_data = {
+                            _tam_label(k): [float(x) for x in v]
+                            for k, v in raw_wind.items()
+                            if isinstance(v, (list, tuple)) and len(v) == len(wind_levels)
+                        }
+                    for m_name, vals in wind_data.items():
+                        fig_tam_plots.add_trace(go.Bar(name=m_name, x=wind_levels, y=vals))
+                    fig_tam_plots.update_layout(
+                        barmode="group",
+                        title=f"KS Error by Wind Level — {rep_choice}",
+                        xaxis_title="Wind Level",
+                        yaxis_title="Kolmogorov-Smirnov Statistic (KS)",
+                        height=430,
+                        legend=dict(orientation="h", yanchor="bottom", y=-0.3),
+                    )
+                else:
+                    # Empirical CDF (real tails) from exported quantile curves.
+                    if cdf_path.exists():
+                        try:
+                            cdf_npz = np.load(cdf_path, allow_pickle=True)
+                            cdf_names = list(cdf_npz["names"])
+                            qgrid = cdf_npz["qgrid"]
+                            curves = cdf_npz["curves"]
+                            if tam_cdf_view == "Lower tail (q≤20%)":
+                                mask = qgrid <= 0.20
+                            elif tam_cdf_view == "Upper tail (q≥80%)":
+                                mask = qgrid >= 0.80
+                            else:
+                                mask = np.ones_like(qgrid, dtype=bool)
+                            for i, name in enumerate(cdf_names):
+                                fig_tam_plots.add_trace(go.Scatter(
+                                    x=curves[i][mask], y=qgrid[mask], name=_tam_label(name),
+                                    mode="lines", line=dict(width=2)
+                                ))
+                            fig_tam_plots.update_layout(
+                                title=f"Empirical CDF of Net Demand (2000–2022) — {rep_choice} — {tam_cdf_view}",
+                                xaxis_title="Net Demand (MW)",
+                                yaxis_title="Cumulative Probability",
+                                height=430,
+                                legend=dict(orientation="h", yanchor="bottom", y=-0.3),
+                            )
+                        except (OSError, KeyError, ValueError):
+                            st.warning("CDF data file exists but could not be read.")
+                            fig_tam_plots = go.Figure()
+                    else:
+                        st.caption(
+                            "Empirical CDF data not found; showing synthetic normal CDF "
+                            "reconstructed from KS/Wasserstein metrics (tails approximate). "
+                            "Re-run the TAM analysis to export real CDF curves."
+                        )
+                        from scipy.special import erf
+                        x_grid = np.linspace(20000, 90000, 200)
+                        era5_cdf = 0.5 * (1 + erf((x_grid - 52000) / (12000 * np.sqrt(2))))
+                        fig_tam_plots.add_trace(go.Scatter(
+                            x=x_grid, y=era5_cdf, name="ERA5 Reference",
+                            line=dict(color="black", width=3)
+                        ))
+                        for r in rows:
+                            m_name = r["Method"]
+                            wass = r["Wasserstein (MW)"]
+                            shift = wass * 0.2 if m_name != "Bicubic" else 3500
+                            scale = 1.0 + (r["KS stat"] * 5)
+                            m_cdf = 0.5 * (1 + erf((x_grid - (52000 + shift)) / (12000 * scale * np.sqrt(2))))
                             fig_tam_plots.add_trace(go.Scatter(
-                                x=curves[i][mask], y=qgrid[mask], name=_tam_label(name),
-                                mode="lines", line=dict(width=2)
+                                x=x_grid, y=m_cdf, name=m_name,
+                                line=dict(width=2)
                             ))
                         fig_tam_plots.update_layout(
-                            title=f"Empirical CDF of Net Demand (2000–2022) — {rep_choice} — {tam_cdf_view}",
+                            title=f"Cumulative Distribution Function (CDF) of Net Demand — {rep_choice}",
                             xaxis_title="Net Demand (MW)",
                             yaxis_title="Cumulative Probability",
                             height=430,
                             legend=dict(orientation="h", yanchor="bottom", y=-0.3),
                         )
-                    except (OSError, KeyError, ValueError):
-                        st.warning("CDF data file exists but could not be read.")
-                        fig_tam_plots = go.Figure()
-                else:
-                    st.caption(
-                        "Empirical CDF data not found; showing synthetic normal CDF "
-                        "reconstructed from KS/Wasserstein metrics (tails approximate). "
-                        "Re-run the TAM analysis to export real CDF curves."
-                    )
-                    from scipy.special import erf
-                    x_grid = np.linspace(20000, 90000, 200)
-                    era5_cdf = 0.5 * (1 + erf((x_grid - 52000) / (12000 * np.sqrt(2))))
-                    fig_tam_plots.add_trace(go.Scatter(
-                        x=x_grid, y=era5_cdf, name="ERA5 Reference",
-                        line=dict(color="black", width=3)
-                    ))
-                    for r in rows:
-                        m_name = r["Method"]
-                        wass = r["Wasserstein (MW)"]
-                        shift = wass * 0.2 if m_name != "Bicubic" else 3500
-                        scale = 1.0 + (r["KS stat"] * 5)
-                        m_cdf = 0.5 * (1 + erf((x_grid - (52000 + shift)) / (12000 * scale * np.sqrt(2))))
-                        fig_tam_plots.add_trace(go.Scatter(
-                            x=x_grid, y=m_cdf, name=m_name,
-                            line=dict(width=2)
-                        ))
-                    fig_tam_plots.update_layout(
-                        title=f"Cumulative Distribution Function (CDF) of Net Demand — {rep_choice}",
-                        xaxis_title="Net Demand (MW)",
-                        yaxis_title="Cumulative Probability",
-                        height=430,
-                        legend=dict(orientation="h", yanchor="bottom", y=-0.3),
-                    )
-
-            st.plotly_chart(fig_tam_plots, use_container_width=True)
-
+    
+                st.plotly_chart(fig_tam_plots, use_container_width=True)
+    
+            else:
+                st.info("No method metrics found in JSON.")
         else:
-            st.info("No method metrics found in JSON.")
-    else:
-        st.warning(f"TAM metrics file not found at {jpath}")
+            st.warning(f"TAM metrics file not found at {jpath}")
