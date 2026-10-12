@@ -16,5 +16,5 @@ METHOD=${METHODS[$((SLURM_ARRAY_TASK_ID / 3))]}
 REGION=${REGIONS[$((SLURM_ARRAY_TASK_ID % 3))]}
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate py311
-source /home/jkeisler/benchmark_downscaling/cleps_jobs/rsds/region_env.sh "$REGION" "$METHOD"
+source /home/jkeisler/benchmark_downscaling/tools/cleps_jobs/rsds/region_env.sh "$REGION" "$METHOD"
 evaluate

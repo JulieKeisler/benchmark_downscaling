@@ -9,7 +9,7 @@
 # rsds rerun. Submit: sbatch --job-name=dotc_<region> --export=ALL,REGION=<france|australia|us_central> dotc.sh
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate py311
-source /home/jkeisler/benchmark_downscaling/cleps_jobs/rsds/region_env.sh "$REGION" dotc
+source /home/jkeisler/benchmark_downscaling/tools/cleps_jobs/rsds/region_env.sh "$REGION" dotc
 python src/baselines/inference_dotc.py \
     --era5-dir "$ERA5_DIR" --gcm-dir "$GCM_DIR" --out-dir "$OUT_DIR" \
     --calib-start 1980 --calib-end 1999 --eval-start 2000 --eval-end 2100 \

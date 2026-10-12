@@ -1,6 +1,6 @@
 #!/bin/bash
 # Per-region data paths, scenario and variable set for the rsds (radiation) reruns on cleps.
-# Usage (inside a job): source ~/benchmark_downscaling/cleps_jobs/rsds/region_env.sh "$REGION" <method>
+# Usage (inside a job): source ~/benchmark_downscaling/tools/cleps_jobs/rsds/region_env.sh "$REGION" <method>
 set -e
 REGION="$1"
 METHOD="$2"
