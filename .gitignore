@@ -16,6 +16,9 @@ RML_FM.md
 cleps_jobs_factorial/
 *.log
 
+# HF deploy staging
+/.deploy_build/
+
 # python
 __pycache__/
 *.egg-info/

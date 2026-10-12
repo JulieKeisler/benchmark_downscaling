@@ -10,6 +10,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -19,8 +20,14 @@ import plotly.graph_objects as go
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-RESULTS_ROOT = ROOT / "results"
+# Data location is overridable for non-local (e.g. hosted) deployments, where
+# results/ is fetched from an external store at startup. See deploy/hf_space/.
+RESULTS_ROOT = Path(os.environ["RESULTS_ROOT"]) if os.environ.get("RESULTS_ROOT") \
+    else ROOT / "results"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+# Downstream TAM lens data (outside this repo). Overridable for hosted deploys,
+# which bundle a small copy alongside the app.
+TAM_DIR = Path(os.environ.get("TAM_DIR", "/home/jkeisler/Documents/Code/TAM_downscaling"))
 
 # Experiment/region labels — each is a top-level subdir of results/
 EXPERIMENT_LABELS = {
@@ -2337,7 +2344,7 @@ if tab_load is not None:
             "The model is trained on ERA5 reanalysis (2012–2021) and applied unchanged to each downscaled scenario (2000–2022)."
         )
 
-        tam_dir = Path("/home/jkeisler/Documents/Code/TAM_downscaling")
+        tam_dir = TAM_DIR
         _tam_gcm_native = _selected_gcm == NATIVE_GCM.get(_selected)
         # Match the suffix emitted by net_lens_region.py: native coupling keeps
         # the legacy region-only files; factorial couplings get _region_gcm.
