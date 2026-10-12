@@ -57,8 +57,9 @@ pretty_name: Downscaling Benchmark for the Electricity System
 # Downscaling Benchmark — results
 
 Evaluation artifacts (metrics, plot data, maps) for the downscaling benchmark
-dashboard. One archive: `results.tar.gz` (extract → `france/`, `australia/`,
-`us_central/`). Consumed at runtime by the companion Streamlit Space; see
+dashboard. Two archives: `results.tar.gz` (extract → `france/`, `australia/`,
+`us_central/`) and `tam.tar.gz` (downstream net-load lens data). Consumed at
+runtime by the companion Streamlit apps; see
 https://github.com/JulieKeisler/benchmark_downscaling.
 """
 
@@ -147,6 +148,9 @@ def upload(dataset_repo: str, space_repo: str, build: Path, token: str | None,
         card.write_text(DATASET_CARD)
         api.upload_file(path_or_fileobj=build / "results.tar.gz", path_in_repo="results.tar.gz",
                         repo_id=dataset_repo, repo_type="dataset")
+        if (build / "tam.tar.gz").exists():
+            api.upload_file(path_or_fileobj=build / "tam.tar.gz", path_in_repo="tam.tar.gz",
+                            repo_id=dataset_repo, repo_type="dataset")
         api.upload_file(path_or_fileobj=card, path_in_repo="README.md",
                         repo_id=dataset_repo, repo_type="dataset")
         print(f"  uploaded dataset -> https://huggingface.co/datasets/{dataset_repo}")
@@ -159,7 +163,7 @@ def upload(dataset_repo: str, space_repo: str, build: Path, token: str | None,
                 print(f"  could not create Space via API ({e}).")
                 print(f"  -> Create it in the UI (SDK = Streamlit, name "
                       f"'{space_repo.split('/')[-1]}'), then re-run "
-                      f"`--upload --only-space --reuse-build`.")
+                      f"`--upload --only space --reuse-build`.")
                 raise
         api.upload_folder(folder_path=build / "space", repo_id=space_repo, repo_type="space")
         print(f"  uploaded space   -> https://huggingface.co/spaces/{space_repo}")
@@ -202,6 +206,7 @@ def main() -> int:
         stage_tam(args.tam_dir, build / "tam")
         print("Creating results.tar.gz …")
         make_archive(build / "results", build / "results.tar.gz")
+        make_archive(build / "tam", build / "tam.tar.gz")
 
     space_dir = stage_space(build)
 
