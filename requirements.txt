@@ -8,3 +8,5 @@ sbck>=0.5
 zarr>=2.18
 gcsfs>=2024.2
 pandas>=2.0
+streamlit>=1.30
+plotly>=5.18

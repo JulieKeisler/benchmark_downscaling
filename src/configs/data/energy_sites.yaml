@@ -1,0 +1,43 @@
+# Energy-relevant sites for the dashboard's day-of-year (DOY) cycle view.
+# -----------------------------------------------------------------------
+# Each site is mapped to the nearest ERA5 grid cell at runtime
+# (src/evaluation/energy_views.py::resolve_sites); sites outside a region's
+# box are dropped, so a site list may be a superset of what a grid covers.
+#
+# `name`  : stable key stored in results/{region}/{method}/plot_data.json
+#           under each variable's "doy" block — renaming a key invalidates
+#           already-computed results.
+# `label` : display string in the dashboard site selector.
+#
+# Sources:
+#   france    : capacity-weighted regional PV barycenters built in
+#               TAM_downscaling/compute_barycenters.py from the RTE ODRÉ
+#               generator registry (barycenters_solar.json).
+#   australia : named operating solar farms (Global Energy Monitor / NEMStats /
+#               Wikipedia coordinates).
+#   us_central: named operating solar farms (EIA / Global Energy Monitor).
+
+energy_sites:
+  france:
+    - {name: grand_est,               label: "Grand Est (solar barycenter)",           lat: 48.6569, lon: 6.0830}
+    - {name: occitanie,               label: "Occitanie (solar barycenter)",           lat: 43.6475, lon: 2.4362}
+    - {name: provence_alpes_cote_d_azur, label: "Provence-Alpes-Côte d'Azur (solar barycenter)", lat: 43.6116, lon: 5.4194}
+    - {name: normandie,               label: "Normandie (solar barycenter)",           lat: 49.0813, lon: -0.0142}
+    - {name: auvergne_rhone_alpes,    label: "Auvergne-Rhône-Alpes (solar barycenter)", lat: 45.3610, lon: 4.4465}
+    - {name: nouvelle_aquitaine,      label: "Nouvelle-Aquitaine (solar barycenter)",  lat: 45.0530, lon: -0.0632}
+    - {name: centre_val_de_loire,     label: "Centre-Val de Loire (solar barycenter)", lat: 47.4074, lon: 1.7230}
+    - {name: bourgogne_franche_comte, label: "Bourgogne-Franche-Comté (solar barycenter)", lat: 47.1931, lon: 4.7037}
+    - {name: bretagne,                label: "Bretagne (solar barycenter)",            lat: 48.1417, lon: -2.6862}
+    - {name: pays_de_la_loire,        label: "Pays de la Loire (solar barycenter)",    lat: 47.2999, lon: -0.9157}
+    - {name: hauts_de_france,         label: "Hauts-de-France (solar barycenter)",     lat: 50.2007, lon: 2.8440}
+    - {name: ile_de_france,           label: "Île-de-France (solar barycenter)",       lat: 48.7702, lon: 2.4982}
+
+  australia:
+    - {name: darling_downs,   label: "Darling Downs Solar Farm, QLD",   lat: -27.1120, lon: 150.8820}
+    - {name: wellington_north, label: "Wellington North Solar Farm, NSW", lat: -32.4953, lon: 148.9770}
+    - {name: broken_hill,     label: "Broken Hill Solar Plant, NSW",     lat: -31.9872, lon: 141.3935}
+
+  us_central:
+    - {name: sherco,                label: "Sherco Solar, Becker MN (710 MW)",           lat: 45.3715, lon: -93.8675}
+    - {name: double_black_diamond,  label: "Double Black Diamond, Sangamon Co. IL (593 MW)", lat: 39.5373, lon: -89.8098}
+    - {name: north_fork,            label: "North Fork Solar, Kiowa Co. OK (120 MW)",    lat: 34.6178, lon: -98.9826}

@@ -28,63 +28,63 @@ and fully open-source.
 ```
 src/
   baselines/
-    inference_bicubic.py      bicubic regridding baseline
-    inference_bcsd.py         BCSD (quantile mapping + delta scaling)
-    inference_cdft.py         CDF-t (quantile mapping)
-    inference_dotc.py         DOTC (distribution of trends correction)
-    inference_idownscale.py   iDownscale (CDF-t on coarse data + MSE regression UNet, trained on perfect prognosis)
-    inference_corrdiff.py     CorrDiff-QM (residual corrective diffusion + QM, two-stage ERA5-only training, stochastic ensemble)
-    methods.py                shared physical post-processing helpers
-    __init__.py               METHOD_REGISTRY + METHOD_LABELS
-    utils/
-      dataset.py              ERA5DownscalingDataset (idownscale / consistency modes)
-      training.py             unified train loop (idownscale / consistency)
-      inference_utils.py      neural_predict (regression / stroke guidance)
-      unet.py                 UNet and UNetAttention architectures
-      normalization.py        encode / decode, compute_stats, LOG_VARS
-      month.py                month_channels (sin/cos encoding)
-      ema.py                  EMA (exponential moving average of weights)
+    inference_bicubic.py       bicubic regridding baseline (inline)
+    inference_bcsd.py          BCSD (quantile mapping + delta scaling)
+    inference_cdft.py          CDF-t (quantile mapping, SBCK)
+    inference_dotc.py          DOTC (trend-preserving CDF-t)
+    inference_idownscale.py    iDownscale (perfect-prognosis U-Net)
+    inference_corrdiff.py      CorrDiff-QM (residual corrective diffusion + QM)
+    inference_cm.py            ConsistencyModel (restricted flow-matching)
+    inference_serpentflowclim.py  SerpentFlow-CLIM (flow-matching gen.) — the
+                                 GHG/ERA5 boundary-condition setup lives in
+                                 serpentflow_clim/ below
+    methods.py                 shared physical post-processing helpers
+    __init__.py                METHOD_REGISTRY + METHOD_LABELS
+    serpentflow_clim/          shared SF library (cdft, climatology, dataset,
+                                 ema, filters, inference, model, time_utils,
+                                 training) used by SerpentFlow-CLIM
+    utils/                     dataset.py, training.py, inference_utils.py,
+                                 unet.py, normalization.py, month.py, ema.py
 
   configs/
-    benchmark.yaml            evaluation config (period, variables, paths)
-    methods.yaml              documented hyperparameters per method
+    benchmark.yaml             evaluation config (period, variables, paths)
+    methods.yaml               documented hyperparameters per method
     data/
-      era5.yaml               ERA5 download config (area, period, variables)
-      cmip6.yaml              CMIP6 download config (models, scenario)
+      regions.yaml             benchmark regions (area, ERA5/GCM dirs, GCM)
+      energy_sites.yaml        dashboard day-of-year site lists per region
+      era5*.yaml, cmip6*.yaml  download configs (area, period, variables)
 
   data_download/
-    DATA.md                   data sources, expected formats, unit traps
-    cds/
-      download_era5.py        ERA5 daily stats + wind → data/raw/era5/
-      download_cmip6.py       CMIP6 GCMs via CDS API → data/raw/cmip6/
-      hourly_era5.py          hourly ERA5 wind → aggregated sfcWind files
-    esgf/
-      download_cmip6_esgf.py  ESGF download (psl / sfcWindmax missing from CDS)
-    local_data/
-    wb2_archive/
-      download_wb2.py         [archived] WeatherBench2 download
+    README.md                  data sources, expected formats, unit traps
+    cds/                       download_era5.py, download_cmip6.py, hourly_era5.py
+    esgf/                      download_cmip6_esgf.py (primary CMIP6 mirror)
+    pangeo/                    download_cmip6_pangeo.py (GCS fallback)
+    arco/                      download_era5_arco.py (GCS ERA5, no CDS),
+                                 fetch_era5_static_regions.py
+    wb2_archive/               download_wb2.py, download_wb2_gcs.py,
+                                 crop_jz_archive.py, data_download_regions.py
 
   evaluation/
-    data_processing.py        load_era5, load_gcm, bicubic_regrid, save_predictions
-    evaluate.py               compute all metrics, write metrics.json + plot_data.json
-    plot_comparison.py        multi-method comparison figures
-    psd_sweep.py              spectral diagnostics sweep
+    data_processing.py         load_era5, load_gcm, bicubic_regrid, save_predictions
+    evaluate.py                compute all metrics, write metrics.json + plot_data.json
+    backfill_energy.py         energy backfill tool (see below)
+    backfill_samples.py        regenerate samples_data_*.npz for old results
+    energy_views.py            day-of-year / inter-variable event computation
+    plot_comparison.py         multi-method comparison figures
+    psd_sweep.py               spectral diagnostics sweep (t★ calibration)
 
-  metrics/
-    scalar_metrics_era5.py    bias, RMSE, KS stat, seasonal MAE, extremes
-    scalar_metrics_gcm.py     temporal correlation, lag-1 autocorrelation, delta scores
-    inter_variables_metrics.py  multivariate Spearman correlation
-    spatial_spectrum_metrics.py  isotropic power spectral density (spectral_mae)
-
-  plots/
-    spatial_plots.py          bias maps, temporal correlation, delta maps
-    line_plots.py             CDF, seasonal cycle, annual anomalies, spectra
-    radar_plots.py            radar chart across all metrics
-    utils.py                  cartopy helpers
-
+  metrics/                     scalar_metrics_{era5,gcm}.py,
+                                 inter_variables_metrics.py,
+                                 spatial_spectrum_metrics.py
+  plots/                       spatial_plots.py, line_plots.py, radar_plots.py, utils.py
+  energy/                      downstream net-load forecast dataset builders
+                                 (see LOAD_FORECASTING.md)
   dashboard/
-    dashboard.py              Streamlit app — browse results interactively
+    dashboard.py               Streamlit app — browse results interactively
 
+tools/                         cluster/ops helpers: gen_factorial_jobs.py,
+                                 backfill_energy_cluster.sh, check_energy_*.py,
+                                 flatten_factorial_results.sh, ...
 tests/
   conftest.py
   test_data_processing.py
@@ -92,9 +92,11 @@ tests/
   test_metrics.py
   test_registry.py
 
-CONTRIBUTING.md               guide for adding a new method
-TUTORIALS.md                  step-by-step walk-throughs
-requirements.txt              cdsapi, pyyaml, xarray, netcdf4, requests, diffusers, sbck
+CONTRIBUTING.md                guide for adding a new method
+TUTORIALS.md                   step-by-step walk-throughs
+LOAD_FORECASTING.md            downstream net-load forecasting task
+requirements.txt               cdsapi, pyyaml, xarray, netcdf4, requests,
+                                 diffusers, sbck, streamlit, plotly, …
 ```
 
 ---
@@ -117,7 +119,7 @@ Python 3.10+ recommended.
 
 ## Data
 
-See [`src/data_download/DATA.md`](src/data_download/DATA.md) for data sources,
+See [`src/data_download/README.md`](src/data_download/README.md) for data sources,
 script descriptions, and expected file formats.
 
 ```bash
@@ -139,8 +141,11 @@ python src/data_download/cds/download_cmip6.py
 | DOTC | `src/baselines/inference_dotc.py` | Pre-computed (–pred-dir) | Vrac et al. (2012). Trend-preserving CDF-t: detrend → QM → re-add trend. |
 | iDownscale | `src/baselines/inference_idownscale.py` | Pre-computed (–pred-dir) | Soares et al. (2024). CERFACS perfect-prognosis U-Net. |
 | CorrDiff-QM | `src/baselines/inference_corrdiff.py` | Pre-computed (–pred-dir) | Mardani et al. (2025). Two-stage residual diffusion (UNet regression + Denoising Diffusion) + quantile mapping, stochastic ensemble. |
+| ConsistencyModel | `src/baselines/inference_cm.py` | Pre-computed (–pred-dir) | Song et al. (2023) restricted flow-matching, ERA5-only. |
+| SerpentFlow-CLIM | `src/baselines/inference_serpentflowclim.py` | Pre-computed (–pred-dir) | Zheng et al. (2025). Flow-matching generative downscaling conditioned on GHG + ERA5 static fields. |
 
-Pre-computed methods require their inference script to be run first, then evaluated with `--pred-dir`.
+Pre-computed methods require their inference script to be run first, then evaluated with `--pred-dir`. Each region is evaluated against its benchmark GCM
+(native layout: one coupling per region) and in factorial layout (all GCM × region couplings); see `src/configs/data/regions.yaml`.
 
 ---
 
@@ -205,6 +210,35 @@ streamlit run src/dashboard/dashboard.py
 # Open http://localhost:8501
 # Results are auto-discovered from results/*/metrics.json
 ```
+
+---
+
+## Energy views & backfill
+
+The dashboard's "Line plots → day-of-year" and "Inter-variable" views read
+per-variable `doy` (region mean + energy sites from `src/configs/data/energy_sites.yaml`)
+and `_events` blocks written into `plot_data.json` by `evaluate.py`. For results
+that predate this feature (or were produced/rsync'd without it), backfill only
+those artefacts — no full re-evaluation needed:
+
+```bash
+python src/evaluation/backfill_energy.py --region <france|australia|us_central>
+```
+
+`backfill_energy.py` resembles an ERA5/GCM-loaded evaluation: it needs `predictions.pt`
+(or an inline registry method such as `bicubic`), re-stamps the GCM time axis, clips
+physical variables, and writes a native single `.nc` per method for the extremes study.
+On HPC, launch it through `tools/backfill_energy_cluster.sh` (and re-run `evaluate.py`
+on the cluster for factorial couplings).
+
+## Tools
+
+Cluster/ops helpers live in `tools/`: per-coupling job generation
+(`gen_factorial_jobs.py`), energy-backfill launchers and checkers
+(`backfill_energy_cluster.sh`, `backfill_jz.tpl.sh`, `backfill_cleps.tpl.sh`,
+`check_energy_backfill.py`, `check_energy_factorial.py`), and post-processing
+helpers (`flatten_factorial_results.sh`). These are run
+directly (`python tools/...`), not installed as a package.
 
 ---
 

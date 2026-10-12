@@ -1,0 +1,53 @@
+# CMIP6 download configuration — US CENTRAL region (ESGF).
+#
+# Reference data (ERA5, daily, 0.25°) comes from the WB2 archive on jz
+# (src/data_download/wb2_archive/crop_jz_archive.py). GCMs come from ESGF.
+#
+# Region: US central — [N, W, S, E] = [48, -105, 34, -89]
+# GCM   : CESM2
+#
+# ENSEMBLE MEMBERS: CESM2 publishes `historical` under r1i1p1f1, but the
+# ssp370/ssp245 extensions only exist as r4i1p1f1. The download script
+# auto-detects the available member per experiment (r1i1p1f1 has no files for
+# the scenarios), so no per-experiment override is needed here.
+#
+# KNOWN GAP (verified on ESGF + CDS, Sep 2026): CESM2 does NOT publish
+# `sfcWindmax` in any CMIP6 table (day/6hr/3hr) or member. It is kept in
+# `variables` so each experiment task is attempted and then reported as
+# "expected missing" via `ignore_missing` (no files are produced).
+#
+# `rsds`: the only daily ssp370/ssp245 `rsds` on ESGF (r1/r2) is RETRACTED.
+#   ssp245 r4i1p1f1 day `rsds` exists on the Pangeo GCS mirror but not in the
+#   ESGF index -> fetched with src/data_download/pangeo/download_cmip6_pangeo.py.
+#   ssp370 has no daily `rsds` in any valid member (only Amon) -> genuine gap.
+
+output_dir: data/cmip6/us_central
+
+area: [48.0, -105.0, 34.0, -89.0]
+
+years:
+  start: 1960
+  end: 2100
+
+scenarios: [ssp370, ssp245]
+
+models:
+  - cesm2          # CESM2
+
+variables:
+  - tas
+  - pr
+  - psl
+  - sfcWind
+  - sfcWindmax
+  - rsds
+
+members:
+  cesm2: r1i1p1f1
+
+ignore_missing:
+  - "sfcWindmax:historical"
+  - "sfcWindmax:ssp370"
+  - "sfcWindmax:ssp245"
+  - "rsds:ssp370"
+  - "rsds:ssp245"   # ESGF-index gap only; file comes from Pangeo (see above)

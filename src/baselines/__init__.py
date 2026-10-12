@@ -1,11 +1,12 @@
 """Baseline method registry.
 
-Each method is a callable with signature:
+Each inline method is a callable with signature:
     method(gcm, obs, variable) -> xr.DataArray
 
-Pre-compute methods (bcsd, cdft, idownscale, consistency, dotc) produce
-predictions.pt via their inference scripts and are loaded via --pred-dir.
-Inline methods (bicubic) run directly inside evaluate.py.
+Inline methods (bicubic, bcsd, cdft, dotc) run directly inside evaluate.py.
+Pre-computed methods (iDownscale, CorrDiff, ConsistencyModel, SerpentFlow-CLIM)
+produce predictions.pt via their inference scripts and are loaded via --pred-dir;
+``corrdiff_qm`` is registered only as a safety-net stub.
 
 Adding a new per-variable method:
     1. Implement it and register in METHOD_REGISTRY below.

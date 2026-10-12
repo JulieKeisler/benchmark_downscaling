@@ -1,0 +1,30 @@
+# Benchmark regions (reference + GCM assignment, 2026).
+# `area` is in CDS order: [North, West, South, East] decimal degrees.
+# The WB2-on-jz crop script (src/data_download/wb2_archive/crop_jz_archive.py)
+# takes `--region <name>` (or an explicit `--area`).
+
+regions:
+  france:
+    label: France
+    area: [55.0, -6.0, 41.0, 10.0]
+    era5_dir: data/era5
+    gcm_dir: data/cmip6
+    gcm: ipsl_cm6a_lr
+    scenario: ssp370
+
+  australia:
+    label: Australia
+    area: [-24.0, 136.0, -38.0, 152.0]
+    era5_dir: data/era5/australia
+    gcm_dir: data/cmip6/australia
+    gcm: cnrm_cm6_1
+    scenario: ssp370
+
+  us_central:
+    label: US central
+    area: [48.0, -105.0, 34.0, -89.0]
+    era5_dir: data/era5/us_central
+    gcm_dir: data/cmip6/us_central
+    gcm: cesm2
+    # ssp245, not ssp370: CESM2 publishes no valid daily ssp370 rsds (2026-09-23)
+    scenario: ssp245

@@ -1,0 +1,43 @@
+# CMIP6 download configuration — AUSTRALIA region (ESGF).
+#
+# Reference data (ERA5, daily, 0.25°) comes from the WB2 archive on jz
+# (src/data_download/wb2_archive/crop_jz_archive.py). GCMs come from ESGF.
+#
+# Region: Australia — [N, W, S, E] = [-24, 136, -38, 152]
+# GCM   : CNRM-CM6-1 (member r1i1p1f2)
+#
+# KNOWN GAP (verified on ESGF + CDS, Sep 2026): CNRM-CM6-1 publishes
+# `sfcWind` in the day table only for `historical`; ssp370/ssp245 have no
+# daily near-surface wind speed (any member/table, and not on CDS). Those two
+# tasks are declared in `ignore_missing` (downgraded to warnings) and are
+# filled locally by deriving `sqrt(uas**2 + vas**2)` from the daily-mean 10 m
+# components, uniformly across historical + ssp370 + ssp245
+# (jz/jobs/derive_sfcwind.py, see src/data_download/README.md).
+
+output_dir: data/cmip6/australia
+
+area: [-24.0, 136.0, -38.0, 152.0]
+
+years:
+  start: 1960
+  end: 2100
+
+scenarios: [ssp370, ssp245]
+
+models:
+  - cnrm_cm6_1     # CNRM-CM6-1
+
+variables:
+  - tas
+  - pr
+  - psl
+  - sfcWindmax
+  - sfcWind
+  - rsds
+
+members:
+  cnrm_cm6_1: r1i1p1f2
+
+ignore_missing:
+  - "sfcWind:ssp370"
+  - "sfcWind:ssp245"

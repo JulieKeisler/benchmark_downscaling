@@ -1,0 +1,31 @@
+# ERA5 download configuration (Copernicus Climate Data Store), default = France.
+#
+# This CDS path is optional: the preferred reference source is the WB2 archive
+# on Jean-Zay via src/data_download/wb2_archive/crop_jz_archive.py (0.25°,
+# daily tas/psl/pr/sfcWind/sfcWindmax, 1979-2022, no CDS account, no queue).
+# rsds (radiation, absent from WB2) comes from ARCO-ERA5 via
+# src/data_download/arco/download_era5_arco.py; use CDS only when both are unreachable.
+#
+# For other regions (australia, us_central) edit `area` or point --config at
+# src/configs/data/regions.yaml (the download scripts only read `area`/`years`).
+
+output_dir: data/era5
+
+# France: North, West, South, East
+area: [55.0, -6.0, 41.0, 10.0]
+
+years:
+  start: 1979
+  end: 2020
+
+daily_statistics:
+  daily_mean:
+    tas: 2m_temperature
+    pr: total_precipitation       # mean of hourly accumulations (m); mm/day = value * 24 * 1000
+    rsds: surface_solar_radiation_downwards  # mean of hourly accumulations (J m-2); W m-2 = value / 3600
+    psl: mean_sea_level_pressure
+
+hourly_wind:
+  enabled: true
+  years_per_request: 1
+  keep_hourly: false   # delete the raw hourly chunk after aggregation (~250 MB/year)
