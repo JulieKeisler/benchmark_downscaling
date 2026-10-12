@@ -9,7 +9,7 @@
 # rsds rerun. Submit: sbatch --job-name=idownscale_<region> --export=ALL,REGION=<france|australia|us_central> idownscale.sh
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate sbck-gpu
-source /home/jkeisler/benchmark_downscaling/cleps_jobs/rsds/region_env.sh "$REGION" idownscale
+source /home/jkeisler/benchmark_downscaling/tools/cleps_jobs/rsds/region_env.sh "$REGION" idownscale
 # Fresh OUT_DIR required: inference_idownscale.py reuses any checkpoints/idownscale.pt it finds.
 test ! -e "$OUT_DIR/checkpoints/idownscale.pt" || { echo "stale checkpoint in $OUT_DIR" >&2; exit 1; }
 python src/baselines/inference_idownscale.py \

@@ -236,8 +236,9 @@ on the cluster for factorial couplings).
 Cluster/ops helpers live in `tools/`: per-coupling job generation
 (`gen_factorial_jobs.py`), energy-backfill launchers and checkers
 (`backfill_energy_cluster.sh`, `backfill_jz.tpl.sh`, `backfill_cleps.tpl.sh`,
-`check_energy_backfill.py`, `check_energy_factorial.py`), and post-processing
-helpers (`flatten_factorial_results.sh`). These are run
+`check_energy_backfill.py`, `check_energy_factorial.py`), post-processing
+helpers (`flatten_factorial_results.sh`), and the HPC sbatch scripts used for
+the rsds reruns (`tools/cleps_jobs/rsds/*.sh`). These are run
 directly (`python tools/...`), not installed as a package.
 
 ---

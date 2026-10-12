@@ -62,7 +62,7 @@ def create_deposition(token: str) -> dict:
                 "license": LICENSE,
                 "access_right": "open",
                 "upload_type": "dataset",
-                "creators": [{"name": "Keisler, Julien"}],
+                "creators": [{"name": "Keisler, Julie"}],
             },
         },
         timeout=30,
