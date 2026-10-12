@@ -38,7 +38,7 @@ $$
 where $\sigma(\cdot)$ is the temporal standard deviation. Measures how well the method
 reproduces daily variability amplitude. Lower is better.
 
-### 1.3 KS statistics (`ks_full`, `ks_q95`, `ks_q05`)
+### 1.3 KS statistics (`ks_full`, `ks_q95`)
 
 Kolmogorov–Smirnov distance between flattened (all grid points × all timesteps)
 empirical distributions:
@@ -47,13 +47,10 @@ $$
 \mathrm{KS}(F_y, F_{\hat{y}}) = \sup_x \left| F_y(x) - F_{\hat{y}}(x) \right|
 $$
 
-Three variants:
+Two variants:
 - `ks_full`: full marginal distribution.
 - `ks_q95`: upper tail — both distributions restricted to values above the
   ERA5 global 95th percentile.
-- `ks_q05`: lower tail — both distributions restricted to values at or below
-  the ERA5 global 5th percentile. Returns NaN for `pr` when the 5th percentile
-  is negative (CDS rounding artifact makes the lower tail empty).
 
 Lower is better. Computed via `scipy.stats.ks_2samp`.
 
@@ -74,19 +71,20 @@ Measures the ability to reproduce the seasonal cycle. Lower is better.
 Bias in the fraction of days exceeding the ERA5 global 95th percentile $q_{0.95}$:
 
 $$
-E_{\mathrm{freq}} = \frac{1}{N} \sum_{i=1}^{N} \left[ P(\hat{y}_{t,i} > q_{0.95}) - P(y_{t,i} > q_{0.95}) \right]
+E_{\mathrm{freq}} = \frac{1}{N} \sum_{i=1}^{N} \left| P(\hat{y}_{t,i} > q_{0.95}) - P(y_{t,i} > q_{0.95}) \right|
 $$
 
 The threshold $q_{0.95}$ is a single global quantile over all grid points and
-timesteps. A positive value means the method generates too many extreme events;
-negative means too few.
+timesteps. The absolute value folds direction into magnitude: the sign of the
+raw bias (positive = too many extreme events, negative = too few) is dropped,
+only the magnitude matters.
 
 ### 1.6 Extreme intensity bias (`extreme_intensity`)
 
 Bias in the mean intensity of events exceeding $q_{0.95}$:
 
 $$
-E_{\mathrm{int}} = \frac{1}{N} \sum_{i=1}^{N} \left[ \mathbb{E}[\hat{y}_{t,i} \mid \hat{y}_{t,i} > q_{0.95}] - \mathbb{E}[y_{t,i} \mid y_{t,i} > q_{0.95}] \right]
+E_{\mathrm{int}} = \frac{1}{N} \sum_{i=1}^{N} \left| \mathbb{E}[\hat{y}_{t,i} \mid \hat{y}_{t,i} > q_{0.95}] - \mathbb{E}[y_{t,i} \mid y_{t,i} > q_{0.95}] \right|
 $$
 
 Uses the same global threshold as `extreme_freq`.
@@ -216,6 +214,5 @@ cold-wet days) are reproduced. Lower is better.
 
 - All spatial aggregations are arithmetic means over the France domain grid points.
 - All temporal aggregations cover the full evaluation period without overlap removal.
-- For `pr`, extreme and tail metrics use raw daily precipitation sums (mm day⁻¹)
-  after unit conversion; the 5th-percentile tail test (`ks_q05`) may return NaN
-  when the ERA5 5th percentile is $\leq 0$ (CDS numerical rounding).
+- For `pr`, extreme metrics use raw daily precipitation sums (mm day⁻¹)
+  after unit conversion.

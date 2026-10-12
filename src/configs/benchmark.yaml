@@ -24,6 +24,7 @@ variables:
   - sfcWind
   - sfcWindmax
   - psl
+  - rsds   # W m-2; ERA5 via ARCO for all regions; us_central uses ssp245 (CESM2 ssp370 has no rsds)
 
 # ── Domain ─────────────────────────────────────────────────────────────────────
 # CDS order: [North, West, South, East] in decimal degrees.

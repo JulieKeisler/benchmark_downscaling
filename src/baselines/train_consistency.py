@@ -56,7 +56,14 @@ def main():
     p.add_argument("--lr",             type=float, default=2e-4)
     p.add_argument("--skip-score",     action="store_true",
                    help="Skip Phase 1 if score.pt already exists")
+    p.add_argument("--variables",      nargs="+",  default=None,
+                   help="Override variable set (e.g. drop sfcWindmax when the GCM lacks it).")
     args = p.parse_args()
+
+    global VARIABLES, N_VARS  # noqa: PLW0603
+    if args.variables:
+        VARIABLES = list(args.variables)
+        N_VARS    = len(VARIABLES)
 
     out_dir     = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

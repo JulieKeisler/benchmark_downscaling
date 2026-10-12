@@ -24,7 +24,7 @@ Usage:
     python scripts/download_era5.py
     python scripts/download_era5.py --variables rsds
     python scripts/download_era5.py --variables rsds --years 1960 2022
-    python scripts/download_era5.py --config configs/data/era5.yaml --jobs 4
+    python scripts/download_era5.py --config src/configs/data/era5.yaml --jobs 4
 """
 
 from __future__ import annotations
@@ -131,7 +131,7 @@ def download_daily_stat(short_name: str, era5_name: str, year: int,
         return None
     tmp = path.with_suffix(".tmp.nc")
     req = _daily_stats_request(era5_name, year, area)
-    for attempt in range(1, 13):  # up to 1 hour of retries
+    for attempt in range(1, 25):  # up to 2 hours of retries
         try:
             _client().retrieve(DAILY_STATS_DATASET, req, str(tmp))
             tmp.rename(path)
@@ -139,14 +139,23 @@ def download_daily_stat(short_name: str, era5_name: str, year: int,
             return None
         except Exception as exc:
             tmp.unlink(missing_ok=True)
-            if "temporarily limited" in str(exc) or "queued" in str(exc).lower():
+            # The ecmwf client swallows the CDS rejection reason into
+            # "Unknown API state 'rejected'"; the underlying cause (visible via
+            # the jobs/results endpoint) is "Number queued requests for this
+            # dataset is temporarily limited" — a per-dataset submission cap.
+            # Treat any rejection/retryable state as a temporary queue limit.
+            msg = str(exc)
+            retryable = ("temporarily limited" in msg or "queued" in msg.lower()
+                         or "rejected" in msg.lower()
+                         or "ProcessingFailedError" in msg)
+            if retryable:
                 wait = 5 * 60
                 print(f"  [{short_name} {year}] queue limit hit, waiting {wait//60} min "
-                      f"(attempt {attempt}/12)...")
+                      f"(attempt {attempt}/24)...")
                 time.sleep(wait)
             else:
                 return f"{short_name} {year}: {exc}"
-    return f"{short_name} {year}: queue limit exceeded after 12 retries"
+    return f"{short_name} {year}: queue limit exceeded after 24 retries"
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +215,7 @@ def download_wind_year(year: int, area: list, output_dir: Path,
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--config", default="configs/data/era5.yaml")
+    parser.add_argument("--config", default="src/configs/data/era5.yaml")
     parser.add_argument("--variables", nargs="+", default=None,
                         help="CMIP6 short names to download (default: all in config). "
                              "Wind (sfcWind/sfcWindmax) is driven by hourly_wind config.")
@@ -215,8 +224,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="Year range, e.g. --years 1960 2022 (default: from config)")
     parser.add_argument("--output-dir", default=None,
                         help="Output directory (default: from config)")
-    parser.add_argument("--jobs", type=int, default=4,
-                        help="Parallel CDS requests (default: 4)")
+    parser.add_argument("--jobs", type=int, default=1,
+                        help="Parallel CDS requests (default: 1 — CDS caps queued "
+                             "requests per dataset; keep low to avoid queue-limit "
+                             "rejections)")
     args = parser.parse_args(argv)
 
     with open(args.config) as f:

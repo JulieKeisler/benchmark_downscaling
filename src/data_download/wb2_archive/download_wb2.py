@@ -33,7 +33,7 @@ Usage:
     python scripts/download_wb2.py --years 1990 1991       # subset
     python scripts/download_wb2.py --variables rsds sfcWind sfcWindmax
     python scripts/download_wb2.py --output-dir /scratch/era5_wb2
-    python scripts/download_wb2.py --config configs/data/era5.yaml
+    python scripts/download_wb2.py --config src/configs/data/era5.yaml
     # Hourly wind on JZ (overwrites 6-hourly sfcWind/sfcWindmax approximation):
     python scripts/download_wb2.py --hourly-wind --variables sfcWind sfcWindmax
 
@@ -203,8 +203,8 @@ def process_year(year: int, ds_wb2: xr.Dataset, output_dir: Path,
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--config", default="configs/data/era5.yaml",
-                        help="Config file for area and years (default: configs/data/era5.yaml)")
+    parser.add_argument("--config", default="src/configs/data/era5.yaml",
+                        help="Config file for area and years (default: src/configs/data/era5.yaml)")
     parser.add_argument("--res", default="0.25", choices=list(WB2_DATASETS_6H),
                         help="Grid resolution (default: 0.25)")
     parser.add_argument("--years", nargs=2, type=int, default=None,

@@ -58,6 +58,14 @@ def bcsd_downscale(gcm: xr.DataArray, obs: xr.DataArray,
     gcm_cal = gcm_calib if gcm_calib is not None else gcm
     obs_cal = obs_calib if obs_calib is not None else obs
 
+    # Longitude convention: GCM crops may use 0–360° while ERA5 uses −180..180°.
+    # Interpolating ERA5 at out-of-range targets silently yields all-NaN, so map
+    # the GCM grid to the ERA5 convention first (keep output on the ERA5 grid).
+    if float(gcm.lon.max()) > 180.0 and float(obs.lon.min()) < 0.0:
+        gcm = gcm.assign_coords(lon=gcm.lon.values - 360.0).sortby("lon")
+        if gcm_cal is not None and gcm_cal is not gcm:
+            gcm_cal = gcm_cal.assign_coords(lon=gcm_cal.lon.values - 360.0).sortby("lon")
+
     # Step 1: Coarsen ERA5 (calib) to GCM grid
     obs_coarse = obs_cal.interp(lat=gcm.lat, lon=gcm.lon, method="linear")
 
@@ -132,6 +140,9 @@ def bcsd_downscale(gcm: xr.DataArray, obs: xr.DataArray,
     else:
         detail = obs_clim.values - obs_clim_coarse_fine.values
         pred_np += detail[month_idx]
+
+    if variable == "rsds":
+        pred_np = np.clip(pred_np, 0.0, None)
 
     return xr.DataArray(pred_np, coords=bc_fine.coords, dims=bc_fine.dims)
 

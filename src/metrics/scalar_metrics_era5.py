@@ -65,24 +65,27 @@ def seasonal_mae(obs: xr.DataArray, pred: xr.DataArray) -> float:
 
 
 def extreme_freq_bias(obs: xr.DataArray, pred: xr.DataArray, q: float = 0.95) -> float:
-    """Spatial mean of bias in fraction of days above obs q-quantile.
+    """Spatial mean of |bias| in fraction of days above obs q-quantile.
 
     The threshold is a single global quantile computed over all space × time
     (not per grid cell). This is a deliberate choice: it tests how well the
     method captures domain-wide extreme events rather than local tail shape.
+    Signed bias is folded into an absolute value: direction (over/under
+    prediction) is lost, magnitude is what matters.
     """
     thr = float(obs.quantile(q))
     obs_freq = (obs > thr).mean("time")
     pred_freq = (pred > thr).mean("time")
-    return float((pred_freq - obs_freq).mean().values)
+    return float(np.abs(pred_freq - obs_freq).mean().values)
 
 
 def extreme_intensity_bias(obs: xr.DataArray, pred: xr.DataArray, q: float = 0.95) -> float:
-    """Spatial mean of bias in mean intensity above obs q-quantile.
+    """Spatial mean of |bias| in mean intensity above obs q-quantile.
 
     Uses the same global threshold as extreme_freq_bias (see that docstring).
+    Signed bias is folded into an absolute value.
     """
     thr = float(obs.quantile(q))
     obs_int = obs.where(obs > thr).mean("time")
     pred_int = pred.where(pred > thr).mean("time")
-    return float((pred_int - obs_int).mean().values)
+    return float(np.abs(pred_int - obs_int).mean().values)

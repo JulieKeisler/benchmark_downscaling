@@ -46,6 +46,8 @@ def run(era5_dir: Path, gcm_dir: Path, out_dir: Path,
         pred = bicubic_regrid(gcm, target_lat, target_lon)
         if var == "pr":
             pred.values[:] = np.clip(pred.values, 0.0, None)
+        if var == "rsds":
+            pred.values[:] = np.clip(pred.values, 0.0, None)
         if ref_da is None:
             ref_da = pred
         arrays.append(torch.tensor(pred.values, dtype=torch.float32))

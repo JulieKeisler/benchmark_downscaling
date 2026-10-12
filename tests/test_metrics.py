@@ -126,9 +126,9 @@ class TestScalarMetricsERA5:
 
     def test_extreme_freq_bias_warm_direction(self, biased):
         obs, pred = biased
-        # Warm pred → more values exceed obs threshold → positive freq bias
+        # Warm pred → more values exceed obs threshold → |freq bias| > 0
         val = extreme_freq_bias(obs, pred)
-        assert val >= 0.0
+        assert val > 0.0
 
 
 # ── scalar_metrics_gcm ────────────────────────────────────────────────────────
