@@ -14,8 +14,8 @@ and uploads:
 Usage:
     export HF_TOKEN=hf_...            # needs write access
     python tools/deploy_hf.py --upload \
-        --dataset-repo JulieKeisler/benchmark-downscaling-results \
-        --space-repo   JulieKeisler/downscaling-benchmark
+        --dataset-repo Jkeisler75/benchmark-downscaling-results \
+        --space-repo   Jkeisler75/downscaling-benchmark
 
 Without ``--upload`` it only stages everything under ``.deploy_build/`` so you
 can inspect sizes / contents first.
@@ -45,8 +45,8 @@ TAM_PATTERNS = [
     "cdf_results*.npz", "cdf_regional*.npz", "tam_forecasts*.npz",
 ]
 
-DEFAULT_DATASET_REPO = "JulieKeisler/benchmark-downscaling-results"
-DEFAULT_SPACE_REPO = "JulieKeisler/downscaling-benchmark"
+DEFAULT_DATASET_REPO = "Jkeisler75/benchmark-downscaling-results"
+DEFAULT_SPACE_REPO = "Jkeisler75/downscaling-benchmark"
 
 DATASET_CARD = """\
 ---

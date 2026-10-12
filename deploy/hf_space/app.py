@@ -24,7 +24,7 @@ REPO_URL = os.environ.get(
     "BENCH_REPO_URL", "https://github.com/JulieKeisler/benchmark_downscaling")
 REPO_REF = os.environ.get("BENCH_REPO_REF", "main")
 RESULTS_REPO = os.environ.get(
-    "HF_RESULTS_REPO", "JulieKeisler/benchmark-downscaling-results")
+    "HF_RESULTS_REPO", "Jkeisler75/benchmark-downscaling-results")
 DATA_DIR = Path(os.environ.get("RESULTS_ROOT", "/data/results"))
 
 
