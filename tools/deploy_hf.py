@@ -165,24 +165,29 @@ def main() -> int:
     ap.add_argument("--dataset-repo", default=DEFAULT_DATASET_REPO)
     ap.add_argument("--space-repo", default=DEFAULT_SPACE_REPO)
     ap.add_argument("--upload", action="store_true", help="Create/update the HF repos")
-    ap.add_argument("--token", default=os.environ.get("HF_TOKEN"))
+    ap.add_argument("--token", default=os.environ.get("HF_TOKEN"),
+                    help="HF token; defaults to $HF_TOKEN, then the `hf auth login` cache")
+    ap.add_argument("--reuse-build", action="store_true",
+                    help="Skip re-staging if .deploy_build/results.tar.gz already exists")
     args = ap.parse_args()
 
     build = args.build_dir
-    if build.exists():
-        shutil.rmtree(build)
-    build.mkdir(parents=True)
 
-    print("Staging results data …")
-    stage_results(args.results_root, build / "results", args.regions)
-    print("Staging TAM data …")
-    if not args.tam_dir.is_dir():
-        print(f"  ERROR: TAM dir not found: {args.tam_dir}", file=sys.stderr)
-        return 1
-    stage_tam(args.tam_dir, build / "tam")
-
-    print("Creating results.tar.gz …")
-    make_archive(build / "results", build / "results.tar.gz")
+    if args.reuse_build and (build / "results.tar.gz").exists():
+        print(f"Reusing existing build in {build}")
+    else:
+        if build.exists():
+            shutil.rmtree(build)
+        build.mkdir(parents=True)
+        print("Staging results data …")
+        stage_results(args.results_root, build / "results", args.regions)
+        print("Staging TAM data …")
+        if not args.tam_dir.is_dir():
+            print(f"  ERROR: TAM dir not found: {args.tam_dir}", file=sys.stderr)
+            return 1
+        stage_tam(args.tam_dir, build / "tam")
+        print("Creating results.tar.gz …")
+        make_archive(build / "results", build / "results.tar.gz")
 
     space_dir = stage_space(build)
 
@@ -193,7 +198,11 @@ def main() -> int:
 
     if args.upload:
         if not args.token:
-            print("  ERROR: --upload needs HF_TOKEN (or --token)", file=sys.stderr)
+            from huggingface_hub import get_token
+            args.token = get_token()  # cached by `hf auth login`
+        if not args.token:
+            print("  ERROR: --upload needs a token. Run `hf auth login`, or set "
+                  "HF_TOKEN / pass --token.", file=sys.stderr)
             return 1
         print("\nUploading …")
         upload(args.dataset_repo, args.space_repo, build, args.token)
