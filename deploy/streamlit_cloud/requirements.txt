@@ -1,0 +1,9 @@
+numpy
+pandas
+plotly
+xarray
+scipy
+matplotlib
+cartopy
+pyyaml
+huggingface_hub
