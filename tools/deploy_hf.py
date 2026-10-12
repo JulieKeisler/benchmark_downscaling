@@ -134,23 +134,35 @@ def _mb(p: Path) -> str:
     return f"{sum(f.stat().st_size for f in p.rglob('*') if f.is_file()) / 1048576:,.1f} MB"
 
 
-def upload(dataset_repo: str, space_repo: str, build: Path, token: str | None) -> None:
+def upload(dataset_repo: str, space_repo: str, build: Path, token: str | None,
+           only: str | None = None) -> None:
     from huggingface_hub import HfApi
 
     api = HfApi(token=token)
 
-    api.create_repo(dataset_repo, repo_type="dataset", exist_ok=True)
-    card = build / "dataset_README.md"
-    card.write_text(DATASET_CARD)
-    api.upload_file(path_or_fileobj=build / "results.tar.gz", path_in_repo="results.tar.gz",
-                    repo_id=dataset_repo, repo_type="dataset")
-    api.upload_file(path_or_fileobj=card, path_in_repo="README.md",
-                    repo_id=dataset_repo, repo_type="dataset")
-    print(f"  uploaded dataset -> https://huggingface.co/datasets/{dataset_repo}")
+    if only in (None, "dataset"):
+        if not api.repo_exists(dataset_repo, repo_type="dataset"):
+            api.create_repo(dataset_repo, repo_type="dataset")
+        card = build / "dataset_README.md"
+        card.write_text(DATASET_CARD)
+        api.upload_file(path_or_fileobj=build / "results.tar.gz", path_in_repo="results.tar.gz",
+                        repo_id=dataset_repo, repo_type="dataset")
+        api.upload_file(path_or_fileobj=card, path_in_repo="README.md",
+                        repo_id=dataset_repo, repo_type="dataset")
+        print(f"  uploaded dataset -> https://huggingface.co/datasets/{dataset_repo}")
 
-    api.create_repo(space_repo, repo_type="space", space_sdk="streamlit", exist_ok=True)
-    api.upload_folder(folder_path=build / "space", repo_id=space_repo, repo_type="space")
-    print(f"  uploaded space   -> https://huggingface.co/spaces/{space_repo}")
+    if only in (None, "space"):
+        if not api.repo_exists(space_repo, repo_type="space"):
+            try:
+                api.create_repo(space_repo, repo_type="space", space_sdk="streamlit")
+            except Exception as e:
+                print(f"  could not create Space via API ({e}).")
+                print(f"  -> Create it in the UI (SDK = Streamlit, name "
+                      f"'{space_repo.split('/')[-1]}'), then re-run "
+                      f"`--upload --only-space --reuse-build`.")
+                raise
+        api.upload_folder(folder_path=build / "space", repo_id=space_repo, repo_type="space")
+        print(f"  uploaded space   -> https://huggingface.co/spaces/{space_repo}")
 
 
 def main() -> int:
@@ -165,6 +177,8 @@ def main() -> int:
     ap.add_argument("--dataset-repo", default=DEFAULT_DATASET_REPO)
     ap.add_argument("--space-repo", default=DEFAULT_SPACE_REPO)
     ap.add_argument("--upload", action="store_true", help="Create/update the HF repos")
+    ap.add_argument("--only", choices=["dataset", "space"],
+                    help="Upload only the dataset or only the Space")
     ap.add_argument("--token", default=os.environ.get("HF_TOKEN"),
                     help="HF token; defaults to $HF_TOKEN, then the `hf auth login` cache")
     ap.add_argument("--reuse-build", action="store_true",
@@ -205,7 +219,7 @@ def main() -> int:
                   "HF_TOKEN / pass --token.", file=sys.stderr)
             return 1
         print("\nUploading …")
-        upload(args.dataset_repo, args.space_repo, build, args.token)
+        upload(args.dataset_repo, args.space_repo, build, args.token, args.only)
         print("\nDone. Set Space variable HF_RESULTS_REPO="
               f"{args.dataset_repo} if you changed it from the default.")
     else:
