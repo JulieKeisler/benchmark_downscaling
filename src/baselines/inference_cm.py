@@ -141,7 +141,13 @@ def main():
     p.add_argument("--stroke-time",    type=float, default=1.0)
     p.add_argument("--n-members",      type=int,   default=1)
     p.add_argument("--batch-size",     type=int,   default=32)
+    p.add_argument("--variables",      nargs="+",  default=None,
+                   help="Override variable set (e.g. drop sfcWindmax when the GCM lacks it).")
     args = p.parse_args()
+    global VARIABLES, N_VARS  # noqa: PLW0603
+    if args.variables:
+        VARIABLES = list(args.variables)
+        N_VARS    = len(VARIABLES)
     run(
         era5_dir    = Path(args.era5_dir),
         gcm_dir     = Path(args.gcm_dir),

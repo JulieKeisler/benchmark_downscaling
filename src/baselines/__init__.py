@@ -51,6 +51,18 @@ METHOD_LABELS: dict[str, str] = {
     "consistency":        "CM",
     "cm":                 "CM",
     "automated_degradation":  "Automated Degradation",
+    # Discovered-mu alignment + conditional flow matching (this project).
+    # mu is a searched DAG of interpretable climate operators rather than the
+    # fixed Fourier low-pass SerpentFlow uses -- hence "chimera", an assembly
+    # of unlike parts. Supersedes the "automated_degradation" entry, which was
+    # produced before the GCM latitude-orientation fix and is excluded from the
+    # dashboard.
+    "ChimeraFlow":        "ChimeraFlow",
+    "chimeraflow":        "ChimeraFlow",
+    "SerpentflowClim":    "SerpentFlow-CLIM",
+    "serpentflow":        "SerpentFlow",
+    "serpentflow_clim":   "SerpentFlow-CLIM",
+    "serpentflowclim":    "SerpentFlow-CLIM",
 }
 __all__ = ["METHOD_REGISTRY", "METHOD_LABELS",
            "bicubic_downscale", "cdft_downscale", "dotc_downscale"]

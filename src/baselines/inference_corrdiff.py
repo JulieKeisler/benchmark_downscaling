@@ -507,7 +507,15 @@ def main() -> None:
     p.add_argument("--seed",          type=int,   default=0)
     p.add_argument("--train",         action="store_true")
     p.add_argument("--predict",       action="store_true")
+    p.add_argument("--variables",     nargs="+", default=None,
+                   help="Override variable set (e.g. drop sfcWindmax when the GCM lacks it).")
     args = p.parse_args()
+
+    global VARIABLES, N_VARS, N_DIFF_IN  # noqa: PLW0603
+    if args.variables:
+        VARIABLES = list(args.variables)
+        N_VARS    = len(VARIABLES)
+        N_DIFF_IN = N_VARS * 3 + 2
 
     out_dir  = Path(args.out_dir)
     device   = "cuda" if torch.cuda.is_available() else "cpu"

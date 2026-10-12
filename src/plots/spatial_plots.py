@@ -307,3 +307,47 @@ def plot_delta_map(
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  saved delta_{period_label}_{variable}.png")
+
+
+def plot_sample_days(
+    obs: xr.DataArray,
+    pred: xr.DataArray,
+    gcm: xr.DataArray | None,
+    variable: str,
+    method: str,
+    plot_dir: Path,
+    n_days: int = 5,
+    seed: int | None = None,
+) -> None:
+    """Select a few random days and save the daily fields for the 'samples' plot.
+
+    The same days are used across all methods (seed derived from the variable
+    name by default) so the dashboard can compare GCM / ERA5 / methods
+    column-wise on identical dates.
+
+    Saves ``samples_data_{variable}.npz`` with the raw daily fields:
+        era5  [n_days, H, W],  gcm  [n_days, H, W],  pred  [n_days, H, W],
+        dates [n_days] (str),  lat, lon
+    """
+    import zlib
+
+    if obs.time.size < n_days:
+        print(f"  skip sample-days {variable}: only {obs.time.size} timestamps")
+        return
+
+    rng_seed = zlib.crc32(variable.encode("utf-8")) if seed is None else seed
+    rng = np.random.default_rng(rng_seed)
+    idx = np.sort(rng.choice(obs.time.size, size=n_days, replace=False))
+    dates = [str(obs.time.values[i])[:10] for i in idx]
+
+    era5_a = obs.values[idx]
+    pred_a = pred.values[idx]
+    gcm_a  = gcm.values[idx] if gcm is not None else None
+
+    np.savez_compressed(
+        plot_dir / f"samples_data_{variable}.npz",
+        era5=era5_a, gcm=gcm_a, pred=pred_a,
+        dates=np.array(dates),
+        lat=obs.lat.values, lon=obs.lon.values,
+    )
+    print(f"  saved samples_data_{variable}.npz ({', '.join(dates)})")

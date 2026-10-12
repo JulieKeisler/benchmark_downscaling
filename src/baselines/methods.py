@@ -25,7 +25,7 @@ def bicubic_downscale(gcm: xr.DataArray, obs: xr.DataArray,
     """Cubic spline interpolation to the ERA5 grid. Stateless baseline."""
     pred = bicubic_regrid(gcm, obs.lat.values, obs.lon.values)
     pred = pred.assign_coords(time=obs.time)
-    if variable == "pr":
+    if variable == "pr" or variable == "rsds":
         pred.values[:] = np.clip(pred.values, 0.0, None)
     return pred
 
@@ -215,6 +215,6 @@ def cordiff_downscale(gcm: xr.DataArray, obs: xr.DataArray,
 
 def _clip_physical(pred: xr.DataArray, variable: str) -> xr.DataArray:
     """Enforce non-negativity for physical variables."""
-    if variable in ("pr", "sfcWind", "sfcWindmax"):
+    if variable in ("pr", "sfcWind", "sfcWindmax", "rsds"):
         pred.values[:] = np.clip(pred.values, 0.0, None)
     return pred

@@ -177,7 +177,13 @@ def main():
     p.add_argument("--batch-size",  type=int, default=32)
     p.add_argument("--train",       action="store_true")
     p.add_argument("--predict",     action="store_true")
+    p.add_argument("--variables",   nargs="+", default=None,
+                   help="Override variable set (e.g. drop sfcWindmax when the GCM lacks it).")
     args = p.parse_args()
+    global VARIABLES, N_VARS  # noqa: PLW0603
+    if args.variables:
+        VARIABLES = list(args.variables)
+        N_VARS    = len(VARIABLES)
     do_train   = args.train   or (not args.train and not args.predict)
     do_predict = args.predict or (not args.train and not args.predict)
     run(

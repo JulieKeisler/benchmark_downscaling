@@ -45,6 +45,12 @@ from plots import (
     plot_bias_map, plot_cdf, plot_seasonal_cycle,
     plot_temporal_corr, plot_autocorr_comparison,
     plot_annual_anomalies, plot_radar, plot_intervar_corr, plot_delta_map,
+    plot_sample_days,
+)
+
+from energy_views import (
+    build_doy_block, domain_series, energy_events, resolve_sites,
+    EVENT_VARIABLES,
 )
 
 
@@ -52,6 +58,36 @@ def _align_pair(obs: xr.DataArray, gcm: xr.DataArray) -> tuple[xr.DataArray, xr.
     """Subset obs and gcm to their common date intersection."""
     aligned = align_time({"obs": obs, "gcm": gcm})
     return aligned["obs"], aligned["gcm"]
+
+
+def _infer_region(out_dir: Path, era5_dir: Path | None) -> str | None:
+    """Benchmark region for the energy-site views (doy cycles, events).
+
+    Explicit --region wins; otherwise match the output path against
+    results/{region}/... and fall back to comparing --era5-dir with
+    src/configs/data/regions.yaml. Returns None when unsure (the doy/events
+    artefacts are then skipped — everything else still runs).
+    """
+    regions_file = ROOT / "src" / "configs" / "data" / "regions.yaml"
+    try:
+        regions = yaml.safe_load(regions_file.read_text()).get("regions", {})
+    except Exception:
+        return None
+    try:
+        rel = out_dir.resolve().relative_to((ROOT / "results").resolve())
+        if rel.parts and rel.parts[0] in regions:
+            return rel.parts[0]
+    except ValueError:
+        pass
+    if era5_dir is not None:
+        for name, cfg in regions.items():
+            try:
+                if (ROOT / cfg["era5_dir"]).resolve() == era5_dir.resolve():
+                    return name
+            except Exception:
+                continue
+    return None
+
 
 
 
@@ -260,7 +296,6 @@ def compute_all_metrics(
     }
     if daily:
         vs_obs["ks_q95"]            = ks_stat(obs, pred_obs, quantile=0.95)
-        vs_obs["ks_q05"]            = ks_stat(obs, pred_obs, quantile=0.05)
         vs_obs["seasonal_mae"]      = seasonal_mae(obs, pred_obs)
         vs_obs["extreme_freq"]      = extreme_freq_bias(obs, pred_obs, q=0.95)
         vs_obs["extreme_intensity"] = extreme_intensity_bias(obs, pred_obs, q=0.95)
@@ -349,6 +384,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="Directory with pre-computed predictions.pt (standard format). "
                              "Required for neural methods (idownscale, consistency). "
                              "Use output of inference_idownscale/inference_cm.py.")
+    parser.add_argument("--region", default=None,
+                        help="Benchmark region (france, australia, us_central). Used for the "
+                             "day-of-year cycles and energy-event stats written to plot_data.json; "
+                             "inferred from --output-dir / --era5-dir when omitted.")
     args = parser.parse_args(argv)
 
     cfg_path = ROOT / args.config
@@ -384,11 +423,21 @@ def main(argv: list[str] | None = None) -> int:
     plot_dir = out_dir / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
 
+    # Region drives the energy-site day-of-year cycles and the event spells
+    # (both stored in plot_data.json, read by the dashboard).
+    region = args.region or _infer_region(out_dir, era5_dir)
+    if region is None:
+        print("\nNOTE: benchmark region unknown — day-of-year cycles and "
+              "energy events skipped (pass --region to enable).")
+
     all_metrics: dict[str, dict] = {}
     all_obs:     dict[str, xr.DataArray] = {}
     all_preds:   dict[str, xr.DataArray] = {}
     all_preds_full: dict[str, xr.DataArray] = {}   # full GCM-period predictions for delta
     all_plot_series: dict[str, dict] = {}
+    all_doy:    dict[str, dict] = {}   # variable → {site: {era5, gcm, pred}}
+    all_domain: dict[str, dict] = {}   # variable → {era5, gcm, pred} region-mean series
+    sites: list | None = None          # resolved once per region
 
     # ── Pre-load any pre-computed predictions ─────────────────────────────────
     precomputed_preds: dict[str, xr.DataArray] = {}
@@ -476,8 +525,36 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  SKIP: unknown method {effective_method}")
             continue
 
+        # GCM on the ERA5 grid with the ERA5 time axis (for the sample-day plot)
+        gcm_on_era5 = None
+        try:
+            gcm_era5_period = gcm_full.sel(
+                time=gcm_full.time.dt.year.isin(range(start, end + 1)))
+            _, gcm_era5_period = _align_pair(obs, gcm_era5_period)
+            gcm_on_era5 = bicubic_regrid(gcm_era5_period,
+                                         obs.lat.values, obs.lon.values)
+            gcm_on_era5 = gcm_on_era5.assign_coords(time=obs.time)
+        except Exception as exc:
+            print(f"  NOTE: sample-days GCM unavailable: {exc}")
+
         all_obs[variable]   = obs
         all_preds[variable] = pred_obs
+
+        # Day-of-year cycles + region-mean daily series (events) — dashboard
+        if region is not None:
+            try:
+                if sites is None:
+                    sites = resolve_sites(region, obs.lat.values, obs.lon.values)
+                block = build_doy_block(obs, gcm_on_era5, pred_obs, sites)
+                if block:
+                    all_doy[variable] = block
+                all_domain[variable] = {
+                    "era5": domain_series(obs),
+                    "gcm":  domain_series(gcm_on_era5) if gcm_on_era5 is not None else None,
+                    "pred": domain_series(pred_obs),
+                }
+            except Exception as exc:
+                print(f"  NOTE: day-of-year/events unavailable: {exc}")
 
         # Compute metrics
         n_t = obs.sizes["time"]
@@ -528,6 +605,9 @@ def main(argv: list[str] | None = None) -> int:
         if daily:
             plot_seasonal_cycle(obs, pred_obs, variable, method_label, var_plot_dir,
                                 ylim=seasonal_ylim)
+        if gcm_on_era5 is not None:
+            plot_sample_days(obs, pred_obs, gcm_on_era5, variable, method_label,
+                             var_plot_dir)
         # GCM-period plots (correlation, autocorr, annual anomalies — full 2000-2100)
         plot_temporal_corr(gcm_metrics, pred_gcm, variable, method_label, var_plot_dir)
         if daily:
@@ -543,6 +623,8 @@ def main(argv: list[str] | None = None) -> int:
     VAR_PAIRS = [
         ("tas", "pr"), ("tas", "sfcWind"), ("tas", "sfcWindmax"),
         ("pr", "sfcWind"), ("pr", "psl"), ("sfcWind", "sfcWindmax"),
+        # Radiation: solar-driven warming, cloud/rain anticorrelation, clear skies under highs.
+        ("tas", "rsds"), ("pr", "rsds"), ("psl", "rsds"),
     ]
     intervar: dict[str, float] = {}
     print(f"\n{'='*60}")
@@ -558,8 +640,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {v1}-{v2}: {score:.4f}")
             plot_intervar_corr(all_obs[v1], all_obs[v2],
                                all_preds[v1], all_preds[v2],
-        # Radiation: solar-driven warming, cloud/rain anticorrelation, clear skies under highs.
-        ("tas", "rsds"), ("pr", "rsds"), ("psl", "rsds"),
                                v1, v2, method_label, plot_dir)
         except Exception as exc:
             print(f"  {v1}-{v2}: ERROR {exc}")
@@ -613,6 +693,22 @@ def main(argv: list[str] | None = None) -> int:
         if delta_all:
             all_metrics["_delta"] = delta_all
 
+    # ── Day-of-year cycles + energy-event spells (dashboard) ─────────────────
+    if all_doy:
+        for variable, block in all_doy.items():
+            all_plot_series.setdefault(variable, {})["doy"] = block
+        n_locs = len(next(iter(all_doy.values())))
+        print(f"\nDay-of-year cycles: {len(all_doy)} variable(s) × "
+              f"{n_locs} location(s)")
+    if all_domain and all(v in all_domain for v in EVENT_VARIABLES):
+        events = energy_events(all_domain, period=(start, end))
+        if events:
+            all_plot_series["_events"] = events
+            c = events["dunkelflaute"]["count"]
+            print(f"Energy events (dunkelflaute, ≥{events['meta']['min_days']}-day spells): "
+                  f"era5/gcm/pred = "
+                  f"{c.get('era5')}/{c.get('gcm', '-')}/{c.get('pred', '-')}")
+
     # Aggregate metrics across variables and generate radar
     var_metrics = {v: m for v, m in all_metrics.items() if not v.startswith("_")}
     agg_obs = {k: float(np.nanmean([var_metrics[v]["vs_obs"][k] for v in var_metrics]))
@@ -628,10 +724,11 @@ def main(argv: list[str] | None = None) -> int:
 
     # Save time-series data for interactive plotly charts in the dashboard
     # Structure: {variable: {seasonal:{months,era5,pred}, annual:{years,gcm,pred,...},
-    #              cdf:{era5_x,pred_x}, spectra:{k_centers_km,era5,pred,...}}}
+    #              cdf:{era5_x,pred_x}, spectra:{k_centers_km,era5,pred,...},
+    #              doy:{site:{era5,gcm,pred}}}, _events:{...}}
     plot_data_file = out_dir / "plot_data.json"
     with open(plot_data_file, "w") as f:
-        json.dump(all_plot_series, f, indent=2)
+        json.dump(all_plot_series, f, separators=(",", ":"))
 
     print(f"\nMetrics saved   → {metrics_file}")
     print(f"Plot data saved → {plot_data_file}")

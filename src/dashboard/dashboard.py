@@ -168,7 +168,7 @@ def _gcm_label(gcm: str) -> str:
 
 experiments = sorted(
     d.name for d in RESULTS_ROOT.iterdir()
-    if d.is_dir() and not d.name.startswith("_") and _has_methods(d)
+    if d.name in NATIVE_GCM and _has_methods(d)
 ) if RESULTS_ROOT.exists() else []
 if not experiments:
     st.error(f"No experiment subdirs found in {RESULTS_ROOT}")
@@ -1628,7 +1628,7 @@ with tab_lines:
     has_plot_data = bool(plot_data)
 
     line_type = st.selectbox(
-        "Plot type", ["seasonal", "annual", "cdf", "spectra"], key="ln_type",
+        "Plot type", ["seasonal", "doy", "annual", "cdf", "spectra"], key="ln_type",
     )
     sel_var_ln = st.selectbox("Variable", all_vars, key="ln_var")
 
@@ -1658,6 +1658,141 @@ with tab_lines:
                 yaxis_title=sel_var_ln, height=430,
                 legend=dict(orientation="h", yanchor="bottom", y=-0.28),
             )
+
+        elif line_type == "doy":
+            # Daily climatology per calendar day (365 bins, 29 Feb removed):
+            # region-wide mean or a single grid point (energy sites), with an
+            # optional day-to-day change panel to spot month-boundary jumps.
+            from energy_views import site_catalog
+            from plotly.subplots import make_subplots
+
+            _doy_by_m = {
+                m: (plot_data.get(m, {}).get(sel_var_ln) or {}).get("doy") or {}
+                for m in sel_methods
+            }
+            _avail = {k for d in _doy_by_m.values() for k in d}
+            _cat = site_catalog(_selected)
+            _sites = (
+                (["global"] if "global" in _avail else [])
+                + [k for k in _cat if k in _avail and k != "global"]
+                + sorted(k for k in _avail if k != "global" and k not in _cat)
+            )
+
+            if not _sites:
+                st.info(
+                    f"No day-of-year data for {sel_var_ln} yet — run "
+                    "`python src/evaluation/backfill_energy.py` or re-run evaluate.py."
+                )
+            else:
+                st.caption(
+                    "Daily climatology over the evaluation period (365 bins, 29 Feb removed) "
+                    "of the region-wide mean or of a single grid point. The lower panel shows "
+                    "the absolute day-to-day change: spikes on month boundaries flag methods "
+                    "that correct each calendar month independently (BCSD, CDF-t, ...)."
+                )
+                c1, c2, c3 = st.columns([2, 2, 3])
+                with c1:
+                    _mode = st.radio("Spatial reduction", ["Region mean", "Site"],
+                                     horizontal=True, key="ln_doy_mode")
+                _site_opts = [k for k in _sites if k != "global"] or _sites
+                with c2:
+                    if _mode == "Site":
+                        sel_site = st.selectbox(
+                            "Site", _site_opts, key="ln_doy_site",
+                            format_func=lambda k: (
+                                f"{_cat[k]['label']} ({_cat[k]['lat']:.2f}°, "
+                                f"{_cat[k]['lon']:.2f}°)" if k in _cat else k),
+                        )
+                    else:
+                        sel_site = "global" if "global" in _avail else _sites[0]
+                with c3:
+                    show_diff = st.checkbox("Show day-to-day change |Δ|",
+                                            value=True, key="ln_doy_diff")
+
+                rows = 2 if show_diff else 1
+                fig = make_subplots(
+                    rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.16,
+                    row_heights=[0.64, 0.36] if rows == 2 else [1.0],
+                    subplot_titles=(["", "Day-to-day change |Δ|"] if rows == 2 else ()),
+                )
+                x = list(range(1, 366))
+                era5_done = gcm_done = False
+                for m in sel_methods:
+                    d = _doy_by_m[m].get(sel_site)
+                    if not d:
+                        continue
+                    for kind, vals, color, width, dash in (
+                        ("era5", d.get("era5"), "black", 2.5, None),
+                        ("gcm",  d.get("gcm"),  "#999999", 2, "dash"),
+                        ("pred", d.get("pred"), _method_color(m), 2, None),
+                    ):
+                        if not vals:
+                            continue
+                        if kind == "era5" and era5_done:
+                            continue
+                        if kind == "gcm" and gcm_done:
+                            continue
+                        name = {"era5": "ERA5", "gcm": "GCM (regridded)"}.get(kind, mlabel(m))
+                        line = dict(color=color, width=width)
+                        if dash:
+                            line["dash"] = dash
+                        # Flat legend: one independent group per baseline so a
+                        # legend click toggles only that method (raw + delta).
+                        group = kind if kind != "pred" else f"pred::{m}"
+                        fig.add_trace(go.Scatter(x=x, y=vals, name=name, line=line,
+                                                 legendgroup=group), row=1, col=1)
+                        if show_diff:
+                            delta = np.abs(np.diff(np.asarray(vals, dtype=float)))
+                            fig.add_trace(go.Scatter(x=x[1:], y=delta.tolist(), name=name,
+                                                     line=line, legendgroup=group,
+                                                     showlegend=False,
+                                                     hoverinfo="skip"), row=2, col=1)
+                        if kind == "era5":
+                            era5_done = True
+                        if kind == "gcm":
+                            gcm_done = True
+
+                _mid = [int(s + n // 2) for s, n in zip(
+                    np.cumsum([0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30]),
+                    [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31])]
+                _site_lbl = (
+                    f" — {_cat[sel_site]['label']}" if sel_site in _cat
+                    else f" — region mean" if sel_site == "global"
+                    else f" — {sel_site}"
+                )
+                fig.update_xaxes(tickmode="array",
+                                 tickvals=[i + 1 for i in _mid],
+                                 ticktext=list("JFMAMJJASOND"))
+                fig.update_xaxes(title_text="", row=1, col=1)
+                fig.update_xaxes(title_text="Day of year", row=rows, col=1)
+                fig.update_yaxes(title_text=sel_var_ln, row=1, col=1)
+                if show_diff:
+                    fig.update_yaxes(title_text="|Δ| / day", row=2, col=1)
+                    fig.update_layout(
+                        title=f"Day-of-year cycle — {sel_var_ln}{_site_lbl}",
+                        height=620,
+                        # Keep the legend on top: a wrapped legend below the
+                        # figure stacks over the small delta panel.
+                        legend=dict(orientation="h", yanchor="bottom", y=1.04,
+                                    xanchor="left", x=0),
+                        margin=dict(t=130),
+                        hovermode="x unified",
+                    )
+                else:
+                    fig.update_layout(
+                        title=f"Day-of-year cycle — {sel_var_ln}{_site_lbl}",
+                        height=430,
+                        legend=dict(orientation="h", yanchor="bottom", y=-0.18),
+                        hovermode="x unified",
+                    )
+                
+                # Add vertical lines for month boundaries
+                for i, x_pos in enumerate(_mid):
+                    fig.add_vline(x=x_pos, line_width=0.5, line_dash="dot", 
+                                line_color="gray", row=1, col=1)
+                    if show_diff:
+                        fig.add_vline(x=x_pos, line_width=0.5, line_dash="dot", 
+                                    line_color="gray", row=2, col=1)
 
         elif line_type == "annual":
             gcm_done = False
@@ -1741,7 +1876,7 @@ with tab_lines:
 
         if fig.data:
             st.plotly_chart(fig, use_container_width=True)
-        else:
+        elif line_type != "doy":   # doy already shows its own hint above
             st.info(f"No plot data for {sel_var_ln} / {line_type}. Re-run evaluate.py.")
 
     else:
@@ -2120,6 +2255,73 @@ with tab_intervar:
                         st.image(str(img), use_container_width=True)
                     else:
                         st.info("No image available")
+
+    # ── Energy events (Dunkelflaute / cold–calm spells) ──────────────────────
+    st.markdown("---")
+    st.subheader("Energy events — Dunkelflaute & cold–calm spells")
+    st.caption(
+        "Days when the region mean is low in wind AND low in solar (Dunkelflaute), "
+        "or cold AND calm (heating demand meets weak wind generation). "
+        "Thresholds are the 20th percentile of the ERA5 daily region mean, applied "
+        "unchanged to the GCM and to every downscaled product so the three are "
+        "classified with the same absolute cutoffs; a spell counts as an event "
+        "from 2 consecutive days on."
+    )
+    _ev_pairs = [(m, (plot_data.get(m) or {}).get("_events")) for m in sel_methods]
+    _ev_pairs = [(m, e) for m, e in _ev_pairs if e]
+    if not _ev_pairs:
+        st.info(
+            "No energy-event data yet — run "
+            "`python src/evaluation/backfill_energy.py` or re-run evaluate.py."
+        )
+    else:
+        _base = _ev_pairs[0][1]
+        _meta = _base.get("meta", {})
+        _thr = _meta.get("thresholds", {})
+        _per = _meta.get("period")
+        st.caption(
+            f"Thresholds (ERA5 region mean): wind < **{_thr.get('sfcWind', float('nan')):.2f} m/s**, "
+            f"solar < **{_thr.get('rsds', float('nan')):.1f} W/m²**, "
+            f"tas < **{_thr.get('tas', float('nan')):.1f} K**"
+            + (f" · period **{_per[0]}–{_per[1]}**" if _per else "")
+            + f" · minimum spell length **{_meta.get('min_days', 2)} days**"
+        )
+        _cats = ["ERA5", "GCM"] + [mlabel(m) for m, _ in _ev_pairs]
+        _colors = ["black", "#999999"] + [_method_color(m) for m, _ in _ev_pairs]
+        st.caption(
+            "Click a legend entry to show or hide that baseline; "
+            "ERA5 and the raw GCM toggle the same way."
+        )
+
+        def _ev_vals(event: str, stat: str) -> list:
+            base = _base.get(event, {}).get(stat, {})
+            return [base.get("era5"), base.get("gcm")] + [
+                e.get(event, {}).get(stat, {}).get("pred") for _, e in _ev_pairs]
+
+        _panels = [
+            ("dunkelflaute",  "count",         "Dunkelflaute — number of events"),
+            ("dunkelflaute",  "mean_duration", "Dunkelflaute — mean duration (days)"),
+            ("cold_low_wind", "count",         "Cold & calm — number of events"),
+            ("cold_low_wind", "mean_duration", "Cold & calm — mean duration (days)"),
+        ]
+        _cols = st.columns(2)
+        for _i, (_evname, _stat, _title) in enumerate(_panels):
+            with _cols[_i % 2]:
+                _vals = [v if v is not None else np.nan
+                         for v in _ev_vals(_evname, _stat)]
+                _f = go.Figure(data=[
+                    go.Bar(name=cat, x=[cat], y=[val], marker_color=color)
+                    for cat, val, color in zip(_cats, _vals, _colors)
+                ])
+                _f.update_layout(
+                    title=_title,
+                    yaxis_title="Events" if _stat == "count" else "Days",
+                    height=380, margin=dict(t=50, b=140, l=10, r=10),
+                    showlegend=True,
+                    legend=dict(orientation="h", yanchor="top", y=-0.30,
+                                font=dict(size=11)),
+                )
+                st.plotly_chart(_f, use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 6 — Load Forecasting (TAM). Region-aware: france has the full set of

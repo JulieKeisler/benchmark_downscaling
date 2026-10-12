@@ -127,7 +127,7 @@ def fetch(task: tuple[str, str, str, int, int, list[float], Path]) -> str | None
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--config", default="configs/data/cmip6.yaml")
+    parser.add_argument("--config", default="src/configs/data/cmip6.yaml")
     parser.add_argument("--models", nargs="*", default=None,
                         help="Subset of models from the config (default: all)")
     parser.add_argument("--variables", nargs="*", default=None,

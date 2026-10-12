@@ -14,6 +14,37 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from PIL import Image
+import io
+
+
+def _save_padded(fig, name, dpi, pad_px=40, facecolor="white"):
+    """Save a figure then pad the PNG with a white border so no map content is
+    flush against the image edge (cartopy + bbox_inches='tight' clips labels)."""
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=dpi, facecolor=facecolor)
+    plt.close(fig)
+    buf.seek(0)
+    im = Image.open(buf).convert("RGB")
+    w, h = im.size
+    out = Image.new("RGB", (w + 2 * pad_px, h + 2 * pad_px), facecolor)
+    out.paste(im, (pad_px, pad_px))
+    out.save(OUT / name)
+    print(f"  Saved {OUT / name}")
+
+
+def _style_geo_axes(ax, add_coastlines=True):
+    """Set cartopy Plate-Carrée axes with gridlines and (optional) coastlines."""
+    ax.set_extent(MAP_EXTENT, crs=ccrs.PlateCarree())
+    gl = ax.gridlines(draw_labels=True, dms=True, x_inline=False, y_inline=False,
+                      linewidth=0.4, color="0.6", alpha=0.6)
+    gl.top_labels = False
+    gl.right_labels = False
+    if add_coastlines:
+        ax.coastlines(resolution="10m", linewidth=0.7, color="0.15")
+        ax.add_feature(cfeature.BORDERS, linewidth=0.5, edgecolor="0.25")
+    return ax
+
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 ERA5_DIR = ROOT / "data" / "era5"
@@ -55,7 +86,7 @@ def make_resolution_gap():
 
     crs = ccrs.PlateCarree()
     fig, axes = plt.subplots(
-        1, 2, figsize=(8, 3.2), subplot_kw={"projection": crs}, constrained_layout=True,
+        1, 2, figsize=(8, 3.2), subplot_kw={"projection": crs},
     )
     # ERA5
     im0 = axes[0].pcolormesh(
@@ -78,8 +109,7 @@ def make_resolution_gap():
     cbar.set_label("Temperature (°C)", fontsize=10)
 
     fig.suptitle(f"Resolution gap — {date}", fontsize=11, fontweight="bold")
-    fig.savefig(OUT / "resolution_gap.png", dpi=120, bbox_inches="tight")
-    plt.close(fig)
+    _save_padded(fig, "resolution_gap.png", dpi=120)
     print(f"  Saved {OUT / 'resolution_gap.png'}")
 
 
@@ -108,7 +138,7 @@ def make_bias_comparison():
     methods = [("bicubic", "Bicubic"), ("dotc", "DOTC"), ("cm", "CM")]
     crs = ccrs.PlateCarree()
     fig, axes = plt.subplots(
-        1, 3, figsize=(15, 5), subplot_kw={"projection": crs}, constrained_layout=True,
+        1, 3, figsize=(15, 5), subplot_kw={"projection": crs},
     )
     vmin, vmax = -3, 3
     norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
@@ -131,8 +161,7 @@ def make_bias_comparison():
         cbar = fig.colorbar(im, ax=axes, shrink=0.85, pad=0.02)
         cbar.set_label(f"{variable.title()} bias (°C)", fontsize=10)
     fig.suptitle("Temperature bias (Prediction − ERA5) — climatological mean", fontsize=13, fontweight="bold")
-    fig.savefig(OUT / "bias_comparison.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    _save_padded(fig, "bias_comparison.png", dpi=150)
     print(f"  Saved {OUT / 'bias_comparison.png'}")
 
 
@@ -154,8 +183,7 @@ def make_method_spectrum():
     ax.set_title("Method spectrum: statistical → neural", fontsize=12, fontweight="bold")
     ax.invert_yaxis()
     ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
-    fig.savefig(OUT / "method_spectrum.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    _save_padded(fig, "method_spectrum.png", dpi=150, pad_px=40)
     print(f"  Saved {OUT / 'method_spectrum.png'}")
 
 

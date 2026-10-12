@@ -31,7 +31,7 @@ import xarray as xr
 from scipy.interpolate import CubicSpline
 
 
-DEFAULT_VARIABLES = ["tas", "pr", "sfcWind", "sfcWindmax", "psl"]
+DEFAULT_VARIABLES = ["tas", "pr", "sfcWind", "sfcWindmax", "psl", "rsds"]
 
 CMIP6_UNIT_CONV: dict = {
     "pr": lambda da: da * 86400,  # kg m⁻² s⁻¹ → mm/day
@@ -348,7 +348,12 @@ def save_predictions(
     torch.save(tensor, out_dir / "predictions.pt")
     np.save(out_dir / "variables.npy", np.array(variables))
     import pandas as pd
-    dates = pd.to_datetime(ref_da.time.values).strftime("%Y-%m-%d").to_numpy()
+    tvals = ref_da.time.values
+    if hasattr(tvals[0], "strftime"):   # cftime_index (GCM native calendar)
+        pd_times = pd.to_datetime([t.strftime("%Y-%m-%d") for t in tvals])
+    else:
+        pd_times = pd.to_datetime(tvals)
+    dates = pd_times.strftime("%Y-%m-%d").to_numpy()
     np.save(out_dir / "eval_dates.npy", dates)
     np.save(out_dir / "lat.npy", ref_da.lat.values)
     np.save(out_dir / "lon.npy", ref_da.lon.values)
@@ -358,11 +363,15 @@ def save_predictions(
 def load_predictions(
     pred_dir: Path,
     variables: list[str],
+    mmap: bool = False,
 ) -> dict[str, "xr.DataArray"]:
     """Load standard-format predictions.pt produced by any inference_*.py script.
 
     Returns dict variable → DataArray on the saved ERA5 grid and time axis.
     Physical units (same as ERA5), no normalisation applied.
+
+    `mmap=True` maps the tensor from disk instead of copying into RAM (useful
+    for multi-GB predictions when only reductions like region means are needed).
     """
     import pandas as pd
 
@@ -371,7 +380,11 @@ def load_predictions(
         if not p.exists():
             raise FileNotFoundError(f"Missing prediction file: {p}")
 
-    tensor = torch.load(pred_dir / "predictions.pt", map_location="cpu")  # [T, C, H, W]
+    try:
+        tensor = torch.load(pred_dir / "predictions.pt", map_location="cpu",
+                            mmap=mmap)  # [T, C, H, W]
+    except TypeError:
+        tensor = torch.load(pred_dir / "predictions.pt", map_location="cpu")
     vars_file = pred_dir / "variables.npy"
     saved_vars = list(np.load(vars_file, allow_pickle=True)) if vars_file.exists() \
                  else variables
