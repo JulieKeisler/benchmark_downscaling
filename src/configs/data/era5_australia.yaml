@@ -1,0 +1,21 @@
+# ERA5 download configuration (Copernicus Climate Data Store) — AUSTRALIA.
+#
+# CDS fallback only. `rsds` (absent from the WB2 archive) is downloaded for all
+# regions from ARCO-ERA5 by src/data_download/arco/download_era5_arco.py. Downstream loaders expect per-year
+# `<var>_<year>.nc` files in data/era5/australia/.
+
+output_dir: data/era5/australia
+
+# Australia: North, West, South, East
+area: [-24.0, 136.0, -38.0, 152.0]
+
+years:
+  start: 1979
+  end: 2022
+
+daily_statistics:
+  daily_mean:
+    rsds: surface_solar_radiation_downwards  # mean of hourly accumulations (J m-2); W m-2 = value / 3600
+
+hourly_wind:
+  enabled: false

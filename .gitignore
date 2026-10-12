@@ -1,15 +1,21 @@
-# local things
-data/
-results/
-jz/
-cleps/
-papers/
+# local things (root-anchored: `<name>/` below would also match
+# e.g. src/configs/data/)
+/data/
+/results/
+/jz/
+/cleps/
+/papers/
 .claude
 CLAUDE.md
 AGENTS.md
 RML_FM.md
-scripts/
+/scripts/
 .rtk
+/checkpoints/
+
+# generated job trees
+cleps_jobs_factorial/
+*.log
 
 # python
 __pycache__/
