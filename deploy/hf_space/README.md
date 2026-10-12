@@ -24,7 +24,7 @@ electricity system (ERA5 reference, CMIP6 GCMs, France / Australia / US-central)
 |---|---|---|
 | `BENCH_REPO_URL` | `https://github.com/JulieKeisler/benchmark_downscaling` | Code source |
 | `BENCH_REPO_REF` | `main` | Git ref/branch to check out |
-| `HF_RESULTS_REPO` | `JulieKeisler/benchmark-downscaling-results` | Dataset repo holding `results.tar.gz` |
+| `HF_RESULTS_REPO` | `Jkeisler75/benchmark-downscaling-results` | Dataset repo holding `results.tar.gz` |
 | `RESULTS_ROOT` | `/data/results` | Where the data archive is extracted |
 
 Deploy/update the data and code with `tools/deploy_hf.py`.
