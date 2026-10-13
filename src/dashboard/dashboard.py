@@ -120,7 +120,13 @@ _PIPELINE_HTML = """
 # so adding a method there automatically surfaces in the dashboard.
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "evaluation"))
-from baselines import METHOD_LABELS, is_unpublished
+try:
+    from baselines import METHOD_LABELS, is_unpublished
+except ImportError:  # tolerate a stale checkout where baselines pre-dates the helper
+    from baselines import METHOD_LABELS
+
+    def is_unpublished(_name) -> bool:
+        return False
 # Extended color palette (tab20)
 COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b",
@@ -1048,24 +1054,23 @@ with tab_welcome:
             "latitude/longitude, i.e. ~100–250 km across. Over a country-sized region "
             "(France is ~1000 km across), that is only a handful to a dozen cells; a single "
             "cell lumps together a city, its surrounding farmland and a mountain range. Each "
-            "cell holds one value *per variable per day* — 2-m temperature, near-surface wind, "
-            "precipitation, sea-level pressure, surface radiation.\n\n"
-            "### Coarse output\n"
-            "At ~250 km there is essentially no local detail: no "
-            "valley-scale heatwave, no gusts at a specific wind-farm site, no convective "
-            "storm cell. Installed capacity and demand sit in places that the grid cannot "
-            "resolve.\n\n"
-"### A free-running simulation\n"
-             "A GCM is not a weather forecast; it is a physics-based "
+"cell holds one value *per variable per day* — 2-m temperature, near-surface wind, "
+             "precipitation, sea-level pressure, surface radiation.\n\n"
+             "Three properties of these coarse, free-running fields are what make "
+             "downscaling necessary for the electricity system:\n"
+             "- **Coarse output.** At ~250 km there is essentially no local detail: no "
+             "valley-scale heatwave, no gusts at a specific wind-farm site, no convective "
+             "storm cell — yet installed capacity and demand sit in places the grid cannot "
+             "resolve.\n"
+             "- **No calendar.** A GCM is not a weather forecast; it is a physics-based "
              "simulation that, due to the chaotic nature of the system, evolves unconstrained "
-             "by observations. As such it is not tied to the calendar. It produces long "
-             "sequences of physically plausible weather, but there is no real \"15 January "
-             "2005\" that its 15 January 2005 corresponds to. This dictates how we must "
-             "evaluate downscaling methods (see [6. Why distribution metrics](#ww-sec6)).\n\n"
-            "### Systematic biases\n"
-            "GCMs are also imperfect: unresolved processes are "
-            "approximated, so outputs carry systematic biases (smoothed variability, "
-            "shifted means, distorted extremes)."
+             "by observations, so it is not tied to the calendar. It produces long sequences "
+             "of physically plausible weather, but there is no real \"15 January 2005\" that "
+             "its 15 January 2005 corresponds to. This dictates how we must evaluate "
+             "downscaling methods (see [6. Why distribution metrics](#ww-sec6)).\n"
+             "- **Systematic biases.** Unresolved processes are approximated, so the outputs "
+             "carry systematic biases — smoothed variability, shifted means, distorted "
+             "extremes."
         )
 
         # ── Section 2: ERA5 reanalysis ──────────────────────────────────────
