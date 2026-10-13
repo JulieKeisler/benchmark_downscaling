@@ -705,9 +705,12 @@ BENCHMARK_CONTEXT = {
         "<b>Settings:</b> ~12 km (EURO-CORDEX) over whole Europe; many variables; a handful of "
         "GCM-RCM chains. "
         "<b>Metrics:</b> mostly mean-climate and extremes diagnostics. "
-        "<b>What differs:</b> we inter-compare statistical and machine-learning methods on a "
-        "<i>single</i> GCM instead of RCM chains — cheaper, and isolates the baseline effect, but we "
-        "lose RCM process realism and multi-GCM spread."
+        "<b>What differs:</b> an RCM is calendar-aligned to its driver (reanalysis or GCM), "
+        "so it enables paired, supervised RCM-emulation benchmarks; our fine truth is observed "
+        "ERA5, which is not aligned to the free-running GCM, so we evaluate unpaired "
+        "(distribution metrics + fidelity vs the GCM). We also inter-compare statistical and "
+        "machine-learning methods on a <i>single</i> GCM instead of RCM chains — cheaper, and "
+        "isolates the baseline effect, but we lose RCM process realism and multi-GCM spread."
     ),
     "ISIMIP — <a href='https://doi.org/10.5194/gmd-10-4321-2017' target='_blank'>Frieler et al. (2017)</a>": (
         "<b>Protocol:</b> harmonised <b>bias-correction</b> (ISIMIP3BASD) of GCM output feeding "
@@ -1025,6 +1028,7 @@ with tab_welcome:
         _wl_region = EXPERIMENT_LABELS.get(_selected, _selected)
         _wl_gcm = _gcm_label(_selected_gcm)
         _wl_mesh = GCM_MESH.get(_selected_gcm, "")
+        _wl_era5 = "1979–2020" if _selected == "france" else "1979–2022"
         st.markdown(
             "Use the links below to jump between sections. Each section first defines the "
             "concept it needs, then explains what it means for this benchmark."
@@ -1132,13 +1136,11 @@ with tab_welcome:
             "respecting both the GCM's climate signal and the observed climate. Two "
             "philosophies scaffold the literature "
             "([Maraun et al., 2010](https://doi.org/10.1029/2009rg000314)):\n"
-            "### Perfect prognosis (PP)\n"
-            "PP learns the coarse→fine mapping from *reanalysis "
+            "- **Perfect prognosis (PP).** Learns the coarse→fine mapping from *reanalysis "
             "pairs only* (coarse ERA5 degraded to GCM-like resolution → fine ERA5), then "
             "applies the learned map to real GCM fields. It keeps the GCM's signal by "
-            "assuming the GCM \"sees\" like the reanalysis.\n\n"
-            "### Model output statistics / bias correction (MOS/BC)\n"
-            "MOS/BC learns the mapping "
+            "assuming the GCM \"sees\" like the reanalysis.\n"
+            "- **Model output statistics / bias correction (MOS/BC).** Learns the mapping "
             "between a *specific GCM's* output and observations, removing that GCM's bias "
             "directly but risking distortion of its future signal.\n\n"
             "### The method spectrum\n"
@@ -1217,7 +1219,7 @@ with tab_welcome:
             "| Item | Setting |\n"
             "|---|---|\n"
             f"| **Region box** | {_wl_region} — 57×65 cells at ≈0.25° |\n"
-            "| **Reference** | ERA5 pseudo-observations; daily 1979–2022 (France 1979–2020) |\n"
+            f"| **Reference** | ERA5 pseudo-observations; daily {_wl_era5} |\n"
             f"| **GCM** | {_wl_gcm}; daily; IPSL-CM6A-LR & CNRM-CM6-1 under SSP3-7.0, CESM2 under SSP2-4.5 |\n"
             "| **Calibration** | 1980–1999 — distribution baselines fit on the selected GCM; neural baselines on ERA5 coarse→fine pairs |\n"
             "| **Accuracy evaluation** | 2000–2020 vs ERA5 |\n"
@@ -1231,25 +1233,29 @@ with tab_welcome:
         st.markdown(
             "## 6 · Why distribution metrics — not MSE/MAE\n"
             "It is tempting to score downscaling with pointwise errors (MSE/MAE vs ERA5). "
-            "Three reasons make this wrong here:\n"
+            "Three distinct problems close that route; together they set the "
+            "evaluation design:\n"
             "1. **No fair pointwise truth exists.** GCM days (raw or downscaled) are not "
             "aligned to historical calendar dates, so there is no \"correct\" ERA5 value for "
             "a given GCM day to be compared against. Only *distributions* of many days are "
-            "comparable.\n"
-            "2. **Point errors miss what planning fears.** MSE/MAE are dominated by the "
-            "bulk of the distribution and are blind to the **tails** (heatwaves, droughts, "
-            "gusts), the **variability/autocorrelation** (does a bad day persist into a bad "
-            "week?), the **spatial structure** (wind correlated across a whole region), and "
-            "the **inter-variable links** (cold, calm nights push peak demand when wind and "
-            "solar both dip). Two series can share an identical RMSE and have totally "
-            "different tails "
+            "comparable. That alone is why we use distribution metrics.\n"
+            "2. **Point errors miss what planning fears.** Even with an aligned truth, "
+            "MSE/MAE are dominated by the bulk of the distribution — blind to the **tails** "
+            "(heatwaves, droughts, gusts), the **variability/autocorrelation** (does a bad "
+            "day persist into a bad week?), the **spatial structure** (wind correlated "
+            "across a whole region), and the **inter-variable links** (cold, calm nights "
+            "push peak demand when wind and solar both dip). Two series can share an "
+            "identical RMSE and have totally different tails "
             "([Maraun et al., 2010](https://doi.org/10.1029/2009rg000314); "
-            "[Gneiting & Raftery, 2007](https://doi.org/10.1198/016214506000001437)).\n"
+            "[Gneiting & Raftery, 2007](https://doi.org/10.1198/016214506000001437)). This "
+            "is why the distribution comparison isolates these aspects one at a time rather "
+            "than collapsing them into a single number.\n"
             "3. **The full target is a giant joint distribution.** Each method yields a "
             "5-variable, 57×65, 100-year field — tens of millions of values. Distance "
             "measures between such high-dimensional multivariate distributions (KS, energy "
             "distance…) converge slowly and depend on how you flatten space and time "
-            "([Székely & Rizzo, 2016](https://doi.org/10.1002/wics.1375)).\n\n"
+            "([Székely & Rizzo, 2016](https://doi.org/10.1002/wics.1375)). This is why we "
+            "do not score the whole object with a single distance.\n\n"
             "So we use two complementary views: **(a)** *monotone summary metrics* that "
             "isolate one distributional aspect at a time (KS statistics, extreme "
             "frequencies, autocorrelation, spatial spectra), computed separately against the "
@@ -1264,7 +1270,7 @@ with tab_welcome:
         # ── Residual bias image ─────────────────────────────────────────────
         st.markdown("### Why interpolation is not enough")
         if IMG_BIAS_COMPARISON.exists():
-            _center_image(str(IMG_BIAS_COMPARISON), max_width=1000)
+            _center_image(str(IMG_BIAS_COMPARISON), max_width=1400)
             st.caption(
                 "Climatological mean bias (Prediction − ERA5) for three baselines, with "
                 "coastlines. Bicubic merely interpolates the GCM, so its systematic "
@@ -1359,12 +1365,12 @@ with tab_welcome:
 
         # ── References ──────────────────────────────────────────────────────
         st.markdown('<a id="ww-refs"></a>', unsafe_allow_html=True)
-        with st.expander("## 📚 References — electricity-system climate sensitivity"):
+        with st.expander("📚 References — electricity-system climate sensitivity"):
             for area, cite in ELECTRICITY_REFS.items():
                 st.markdown(f"- **{area}.** {cite}")
 
         # ── Cite & data ─────────────────────────────────────────────────────
-        with st.expander("## 📖 Cite this benchmark, and where the data lives"):
+        with st.expander("📖 Cite this benchmark, and where the data lives"):
             st.markdown(
                 "- **Paper.** *In preparation* — a DOI/preprint link will be added here when "
                 "available (author list to be confirmed).\n"
@@ -2858,3 +2864,12 @@ if tab_load is not None:
                 )
             else:
                 st.info("No TAM metrics available for this selection.")
+
+# ── Footer (rendered below every tab) ────────────────────────────────────────
+st.divider()
+st.markdown(
+    "#### AI use\n"
+    "This dashboard was developed and is maintained with the help of AI coding "
+    "assistants (Claude / OpenCode), which were also used to help reproduce most "
+    "of the baseline results shown here."
+)

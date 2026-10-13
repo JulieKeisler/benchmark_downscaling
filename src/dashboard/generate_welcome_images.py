@@ -138,7 +138,7 @@ def make_bias_comparison():
     methods = [("bicubic", "Bicubic"), ("dotc", "DOTC"), ("cm", "CM")]
     crs = ccrs.PlateCarree()
     fig, axes = plt.subplots(
-        1, 3, figsize=(15, 5), subplot_kw={"projection": crs},
+        1, 3, figsize=(16, 5.6), subplot_kw={"projection": crs},
     )
     vmin, vmax = -3, 3
     norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
@@ -154,14 +154,16 @@ def make_bias_comparison():
             im = ax.pcolormesh(lon, lat, bias, cmap="RdBu_r", norm=norm, transform=crs)
         except Exception as e:
             ax.text(0.5, 0.5, f"No data\n({method})", ha="center", va="center",
-                    transform=ax.transAxes, fontsize=10, color="gray")
-        ax.set_title(label, fontsize=11, fontweight="bold")
+                    transform=ax.transAxes, fontsize=12, color="gray")
+        ax.set_title(label, fontsize=15, fontweight="bold", pad=8)
         _style_geo_axes(ax)
     if im is not None:
         cbar = fig.colorbar(im, ax=axes, shrink=0.85, pad=0.02)
-        cbar.set_label(f"{variable.title()} bias (°C)", fontsize=10)
-    fig.suptitle("Temperature bias (Prediction − ERA5) — climatological mean", fontsize=13, fontweight="bold")
-    _save_padded(fig, "bias_comparison.png", dpi=150)
+        cbar.set_label(f"{variable.title()} bias (°C)", fontsize=12)
+    fig.suptitle("Temperature bias (Prediction − ERA5) — climatological mean",
+                 fontsize=17, fontweight="bold")
+    fig.subplots_adjust(top=0.85, bottom=0.06, wspace=0.12)
+    _save_padded(fig, "bias_comparison.png", dpi=170)
     print(f"  Saved {OUT / 'bias_comparison.png'}")
 
 
