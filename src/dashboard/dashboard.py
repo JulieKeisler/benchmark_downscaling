@@ -56,11 +56,11 @@ NATIVE_GCM = {
     "us_central": "cesm2",
 }
 
-# Scenario tag per GCM (for labels only)
+# Display scenario per GCM (used in labels and the welcome protocol text)
 GCM_SCEN = {
-    "ipsl_cm6a_lr": "ssp370",
-    "cnrm_cm6_1":   "ssp370",
-    "cesm2":        "ssp245",
+    "ipsl_cm6a_lr": "SSP3-7.0",
+    "cnrm_cm6_1":   "SSP3-7.0",
+    "cesm2":        "SSP2-4.5",
 }
 
 GCM_LABELS = {
@@ -70,9 +70,16 @@ GCM_LABELS = {
 }
 
 GCM_GRIDS = {
-    "ipsl_cm6a_lr": "IPSL-CM6A-LR · ≈2.5° (11×7)",
-    "cnrm_cm6_1":   "CNRM-CM6-1 · ≈0.5° (10×12)",
-    "cesm2":        "CESM2 · ≈1° (15×13)",
+    "ipsl_cm6a_lr": "≈2.5° (11×7)",
+    "cnrm_cm6_1":   "≈0.5° (10×12)",
+    "cesm2":        "≈1° (15×13)",
+}
+
+# Coarse mesh (rows × cols) per GCM, for the recipe box
+GCM_MESH = {
+    "ipsl_cm6a_lr": "11×7",
+    "cnrm_cm6_1":   "10×12",
+    "cesm2":        "15×13",
 }
 
 IMG_RESOLUTION_GAP = STATIC_DIR / "resolution_gap.png"
@@ -89,7 +96,7 @@ _PIPELINE_HTML = """
   <div style="display:flex; align-items:center; color:#555; font-size:22px; font-weight:bold">→</div>
   <div style="background:#ff7f0e; color:#fff; border-radius:8px; padding:10px 14px; width:190px; text-align:center">
     <div style="font-size:20px; font-weight:bold">Baseline</div>
-    <div style="font-size:12px; opacity:.95">Bicubic · BCSD · CDF-t · DOTC<br>iDownscale · CorrDiff-QM · CM</div>
+    <div style="font-size:12px; opacity:.95">Bicubic · BCSD · CDF-t · DOTC<br>iDownscale · CorrDiff-QM · CM · SerpentFlow-CLIM</div>
   </div>
   <div style="display:flex; align-items:center; color:#555; font-size:22px; font-weight:bold">→</div>
   <div style="background:#2ca02c; color:#fff; border-radius:8px; padding:10px 14px; width:180px; text-align:center">
@@ -123,6 +130,10 @@ COLORS = [
 ]
 
 GITHUB_URL = "https://github.com/JulieKeisler/benchmark_downscaling"
+
+# Developer/maintainer instructions are hidden from the public deployment unless
+# SHOW_DEV_NOTES=1 is set (see deploy/streamlit_cloud/app.py).
+DEV_NOTES = os.environ.get("SHOW_DEV_NOTES") == "1"
 
 st.set_page_config(page_title="Downscaling Benchmark for the Electricity System", layout="wide")
 st.title("Downscaling Benchmark for the Electricity System")
@@ -350,6 +361,15 @@ METHOD_DOCS = {
         "detailed": "Hess et al. 2025 / Song et al. 2023 (adapted). Student + EMA teacher trained on the self-consistency property with curriculum N from 10→150 bins (EDM schedule, Tmax=2.0). Inference: bicubic-regridded GCM is encoded and perturbed at t*=0.5, then one denoising step projects it onto the learned ERA5 manifold. UNetAttention, 5 variables jointly.",
         "eq": r"\hat{y} = f_\theta\!\left( \phi(\mathcal{I}(\mathrm{GCM}_t)) + \varepsilon\, t^{*},\ t^{*} \right)",
         "grading": "Stochastic-generative; one-step (fast).",
+    },
+    "serpentflowclim": {
+        "name": "SerpentFlow-CLIM",
+        "type": "Generative · conditional flow matching (climatology-aware)",
+        "family": "neural",
+        "simple": "A flow-matching model generates fine fields from a climatology-aware conditioning: the GCM's Fourier low-pass plus a CDF-t-corrected seasonal climatology. An 8-member ODE ensemble is averaged.",
+        "detailed": "Haidar (2026). The source encoding combines a spatial Fourier low-pass of the GCM with its low-frequency seasonal climatology, whose bias is removed by a CDF-t correction calibrated on 1980–1999. A UNetFlow (6 variables, 4 static channels, 365 day-of-year embeddings) learns the conditional flow on 1980–1999 ERA5+GCM tensors; inference integrates an 8-member dopri5 ODE ensemble and re-injects the corrected GCM climatology for tas. Non-negative variables (pr, sfcWind, sfcWindmax, rsds) are clipped at zero.",
+        "eq": r"\mathcal{L}_{\mathrm{FM}} = \mathbb{E}_{t\sim\mathcal{U}(0,1)}\!\left[\, \left\| v_\theta(\phi_t, t) - u \right\|^2 \,\right]",
+        "grading": "Stochastic-generative; climatology-aware conditioning, 8-member ensemble averaged.",
     },
 }
 
@@ -638,6 +658,7 @@ METHOD_LINKS = {
     "idownscale":  {"pub": "CERFACS iDownscale EGU26 short course — https://github.com/cerfacs-globc/idownscale/tree/master/docs/egu26_short_course", "impl": "src/baselines/inference_idownscale.py"},
     "corrdiff_qm": {"pub": "Mardani et al. (2025), arXiv:2209.07619 — CorrDiff residual corrective diffusion", "impl": "src/baselines/inference_corrdiff.py"},
     "cm":          {"pub": "Hess et al. (2025) Nature Machine Intelligence — consistency-model downscaling; distills Song et al. (2023) arXiv:2303.01469 — ref. code: https://github.com/p-hss/consistency-climate-downscaling", "impl": "src/baselines/inference_cm.py + train_consistency.py"},
+    "serpentflowclim": {"pub": "SerpentFlow — arXiv:2601.01979 (conditional flow matching); climatology-aware CLIM adaptation per Haidar (2026)", "impl": "src/baselines/inference_serpentflowclim.py + serpentflow_clim/"},
 }
 
 METRIC_IMPL = {
@@ -758,12 +779,12 @@ PROTOCOL_PRIMER = (
     "distort or 'freeze' its future signal (e.g. delta/quantile matching). "
     "**Our benchmark is NOT a pure perfect-prognosis study** — and that is exactly what "
     "distinguishes it from classic PP (VALUE) and pure-BC (ISIMIP) inter-comparisons. The "
-    "baselines are calibrated in *their own native way* on the same single GCM: "
+    "baselines are calibrated in their *own* way on the selected GCM: "
     "bicubic interpolates with no training at all; BCSD, CDF-t and DOTC are "
     "MOS/bias-correction methods fit directly against the GCM historical output (their "
-    "calibration *is* GCM-vs-ERA5, not reanalysis-vs-reanalysis); only the neural/generative "
-    "baselines (CorrDiff, iDownScale, CM) are trained on ERA5 coarse→fine pairs in the PP "
-    "spirit and then applied to the GCM. "
+    "calibration *is* GCM-vs-ERA5, not reanalysis-vs-reanalysis); the neural/generative "
+    "baselines (CorrDiff, iDownScale, CM, SerpentFlow-CLIM) are trained on ERA5 coarse→fine "
+    "pairs in the PP spirit and then applied to the GCM. "
     "Because calibration philosophies therefore differ *within* the benchmark, we hold the GCM, "
     "grid, period and train/test split fixed for all baselines and score each one on BOTH "
     "(i) reproduction of observed distributions and (ii) preservation of the GCM's "
@@ -803,7 +824,7 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    search_query = st.text_input("🔎 Research", key="search_box",
+    search_query = st.text_input("🔎 Search", key="search_box",
                                  placeholder="e.g. bias, BCSD, extremes, trend...")
     if search_query.strip():
         q = search_query.strip().lower()
@@ -994,6 +1015,9 @@ with tab_welcome:
 
     # ── Welcome: Overview ────────────────────────────────────────────────────
     if ww_mode == "Overview":
+        _wl_region = EXPERIMENT_LABELS.get(_selected, _selected)
+        _wl_gcm = _gcm_label(_selected_gcm)
+        _wl_mesh = GCM_MESH.get(_selected_gcm, "")
         st.markdown(
             "Use the links below to jump between sections. Each section first defines the "
             "concept it needs, then explains what it means for this benchmark."
@@ -1019,12 +1043,12 @@ with tab_welcome:
             "A **Global Climate Model (GCM)** simulates the coupled atmosphere–ocean–land "
             "system by solving the equations of physics on a three-dimensional grid that "
             "covers the whole Earth. To produce a century or more of simulation, it must be "
-            "computationally tractable, so each grid cell is huge — typically **≈1–2.5°** of "
-            "latitude/longitude, i.e. **~100–250 km** across. Over Metropolitan France, a "
-            "country of ~1000 km, that is only a handful to a dozen cells; a single cell "
-            "lumps together Paris, the Loire vineyards and a mountain range. Each cell holds "
-            "one value *per variable per day* — 2-m temperature, near-surface wind, "
-            "precipitation, sea-level pressure.\n\n"
+            "computationally tractable, so each grid cell is huge — typically ≈1–2.5° of "
+            "latitude/longitude, i.e. ~100–250 km across. Over a country-sized region "
+            "(France is ~1000 km across), that is only a handful to a dozen cells; a single "
+            "cell lumps together a city, its surrounding farmland and a mountain range. Each "
+            "cell holds one value *per variable per day* — 2-m temperature, near-surface wind, "
+            "precipitation, sea-level pressure, surface radiation.\n\n"
             "### Coarse output\n"
             "At ~250 km there is essentially no local detail: no "
             "valley-scale heatwave, no gusts at a specific wind-farm site, no convective "
@@ -1038,7 +1062,7 @@ with tab_welcome:
             "methods (see [6. Why distribution metrics](#ww-sec6)).\n\n"
             "### Systematic biases\n"
             "GCMs are also imperfect: unresolved processes are "
-            "approximated, so outputs carry **systematic biases** (smoothed variability, "
+            "approximated, so outputs carry systematic biases (smoothed variability, "
             "shifted means, distorted extremes)."
         )
 
@@ -1048,11 +1072,12 @@ with tab_welcome:
             "## 2 · ERA5 reanalysis: our fine-resolution \"ground truth\"\n"
             "To build and test downscaling we need a *high-resolution reference of what the "
             "weather actually was*. Observations alone are sparse and irregular, but "
-            "**reanalysis** fixes this: ERA5 (from ECMWF) blends decades of real "
+            "reanalysis fixes this: ERA5 (from ECMWF) blends decades of real "
             "observations (satellites, stations, radiosondes) into a numerical weather "
             "model, producing a physically consistent, gap-free historical record at "
-            "**≈0.25° (~25 km)** resolution, continuously since 1940. It covers our "
-            "study region on a **57×65** grid (~3700 cells) with all five variables we use.\n"
+            "≈0.25° (~25 km) resolution, daily since 1940 (we use the 1979–2022 crop). It "
+            "covers any study region on a **57×65** grid (~3700 cells) with all the variables "
+            "we use — availability follows the GCM, so e.g. CESM2 has no daily `sfcWindmax`.\n"
             "ERA5 is not perfect, but it is the best available \"ground truth\" at the "
             "resolution energy applications need, and it is the standard reference for "
             "downscaling development. Throughout this dashboard, \"the observations\" / "
@@ -1073,8 +1098,8 @@ with tab_welcome:
             "- **Hydrology** bounds hydro output and the availability of cooling water for "
             "thermal plants; **pressure regimes** set broad-scale weather patterns.\n\n"
             "### Net load — the quantity that matters\n"
-            "The single quantity that concentrates all these sensitivities is the **net "
-            "load**: `NetDemand = load − wind − solar`. It is what a system operator must "
+            "The single quantity that concentrates all these sensitivities is net "
+            "load: `NetDemand = load − wind − solar`. It is what a system operator must "
             "balance in real time and what capacity planning must size for. Because it "
             "compounds the temperature sensitivity of demand *and* the wind/solar "
             "sensitivity of generation, it is exactly the object through which this "
@@ -1082,10 +1107,10 @@ with tab_welcome:
             "operationally relevant errors (see [8. Downstream test](#ww-sec8)).\n\n"
             "### The practical barriers\n"
             "Using climate projections for such work is routinely blocked by documented, "
-            "practical barriers: the fields are **too coarse** for site-level analysis, they "
-            "carry **systematic biases** that mislead impact models, different models and "
-            "scenarios **disagree**, daily-mean outputs miss the **sub-daily and extremes** "
-            "that stress grids, and the datasets are **unwieldy** for non-specialists "
+            "practical barriers: the fields are too coarse for site-level analysis, they "
+            "carry systematic biases that mislead impact models, different models and "
+            "scenarios disagree, daily-mean outputs miss the sub-daily and extremes "
+            "that stress grids, and the datasets are unwieldy for non-specialists "
             "([Bartók et al., 2019](https://doi.org/10.1016/j.cliser.2019.100138); "
             "[Staffell & Pfenninger, 2018](https://doi.org/10.1016/j.energy.2017.12.051); "
             "[Auffhammer et al., 2017](https://doi.org/10.1073/pnas.1613193114))."
@@ -1112,10 +1137,11 @@ with tab_welcome:
             "### The method spectrum\n"
             "Practical methods span the range: pure **interpolation** (bicubic), "
             "**distribution-based / quantile** methods (BCSD, CDF-t, DOTC), **learned "
-            "regression** methods (iDownscale), and **generative / diffusion** methods "
-            "(CorrDiff, consistency models). The `Methods` tab documents all seven used "
-            "here. Crucially, **our benchmark is not a pure perfect-prognosis study** — the "
-            "baselines are calibrated in their *own native way* on the same single GCM, and "
+            "regression** methods (iDownscale), and **generative** methods "
+            "(CorrDiff, consistency models, SerpentFlow-CLIM). The `Methods` tab documents "
+            "the eight baselines used here. Crucially, **our benchmark is not a pure "
+            "perfect-prognosis study** — the "
+            "baselines are calibrated in their *own* way on the selected GCM, and "
             "[7. Why not pure perfect prognosis](#ww-sec7) explains why this matters when "
             "comparing against existing benchmarks."
         )
@@ -1129,7 +1155,10 @@ with tab_welcome:
                 "with *both* the GCM's climate signal and the observed climate."
             )
         else:
-            st.info("Generate `src/dashboard/static/resolution_gap.png` with `generate_welcome_images.py`.")
+            if DEV_NOTES:
+                st.info("Generate `src/dashboard/static/resolution_gap.png` with `generate_welcome_images.py`.")
+            else:
+                st.caption("_Resolution-gap figure not included in this build._")
 
         # ── Setup: what this benchmark does ──────────────────────────────────
         st.markdown('<a id="ww-sec5"></a>', unsafe_allow_html=True)
@@ -1140,29 +1169,31 @@ with tab_welcome:
                 "We fix *every source of variation except the downscaling method*, then "
                 "compare all methods fairly on the same inputs, the same grid, and the same "
                 "train/test split:\n"
-                "- **Input (the GCM):** IPSL-CM6A-LR, daily, historical + SSP370 scenario, "
-                "(2000–2100), its 11×7-cell region over France.\n"
-                "- **Reference (ground truth):** ERA5 reanalysis, 57×65 grid, 1960–2020.\n"
-                "- **Variables:** the five that drive the electric system — `tas` "
-                "(2-m temperature, drives demand), `sfcWind` / `sfcWindmax` (10-m wind speed "
-                "and gust, drive wind generation), `pr` (precipitation, drives hydrology), "
-                "`psl` (sea-level pressure, sets weather regimes).\n"
+                f"- **Input (the GCM):** {_wl_gcm}, daily, {GCM_GRIDS.get(_selected_gcm, '')} "
+                "coarse grid; projections evaluated 2000–2100.\n"
+                "- **Reference (ground truth):** ERA5 reanalysis, 57×65 grid, "
+                "1979–2022 (France: 1979–2020).\n"
+                "- **Variables:** the electricity drivers — `tas` (2-m temperature, drives "
+                "demand), `sfcWind` / `sfcWindmax` (10-m wind speed and gust, drive wind "
+                "generation), `rsds` (surface solar radiation, drives PV), `pr` "
+                "(precipitation, drives hydrology), `psl` (sea-level pressure, sets weather "
+                "regimes). Availability follows the GCM.\n"
                 "- **Calibration / evaluation split:** fitted baselines calibrate on "
-                "**1980–1999** and are evaluated on the **disjoint 2000–2020** window (the "
+                "1980–1999 and are evaluated on the disjoint 2000–2020 window (the "
                 "raw, interpolation-only baseline needs no calibration).\n\n"
                 "Each baseline therefore has a single job: turn the GCM's coarse fields "
                 "into 57×65 daily fields whose *distribution* matches ERA5 (accuracy) while "
                 "preserving the *GCM's own climate-change signal* through 2100 (fidelity). "
-                "Because the GCM is free-running, **we cannot align its days to historical "
-                "dates** — so pointwise scores like MSE/MAE vs ERA5 are not even well defined. "
-                "The only fair comparison is between **distributions** — and "
+                "Because the GCM is free-running, we cannot align its days to historical "
+                "dates — so pointwise scores like MSE/MAE vs ERA5 are not even well defined. "
+                "The only fair comparison is between distributions — and "
                 "[6. Why distribution metrics](#ww-sec6) explains what this forces us to "
                 "measure."
             )
         with c2:
             st.markdown("#### Recipe")
             for step, txt in [
-                ("1", "GCM input: IPSL-CM6A-LR, 11×7 grid (2000–2100)"),
+                ("1", f"GCM input: {_wl_gcm}, {_wl_mesh} grid (2000–2100)"),
                 ("2", "Downscale with each baseline to 57×65 (~25 km)"),
                 ("3", "Score vs ERA5 pseudo-observations (accuracy)"),
                 ("4", "Score vs GCM (does it keep the climate signal?)"),
@@ -1173,6 +1204,20 @@ with tab_welcome:
                     f"margin:4px 0'><b>{step}.</b> {txt}</div>",
                     unsafe_allow_html=True,
                 )
+
+        st.markdown("#### Protocol at a glance")
+        st.markdown(
+            "| Item | Setting |\n"
+            "|---|---|\n"
+            f"| **Region box** | {_wl_region} — 57×65 cells at ≈0.25° |\n"
+            "| **Reference** | ERA5 pseudo-observations; daily 1979–2022 (France 1979–2020) |\n"
+            f"| **GCM** | {_wl_gcm}; daily; IPSL-CM6A-LR & CNRM-CM6-1 under SSP3-7.0, CESM2 under SSP2-4.5 |\n"
+            "| **Calibration** | 1980–1999 — distribution baselines fit on the selected GCM; neural baselines on ERA5 coarse→fine pairs |\n"
+            "| **Accuracy evaluation** | 2000–2020 vs ERA5 |\n"
+            "| **Fidelity evaluation** | 2000–2100 vs the GCM; Δ-signal 2040–2060 & 2080–2100 |\n"
+            "| **Downstream (TAM)** | trained 2012–2021 on ERA5 + load; applied unchanged 2000–2022 |\n"
+            "| **Units** | tas K · pr mm/day · sfcWind / sfcWindmax m/s · psl Pa · rsds W/m² |"
+        )
 
         # ── Section 6: distribution metrics ──────────────────────────────────
         st.markdown('<a id="ww-sec6"></a>', unsafe_allow_html=True)
@@ -1214,16 +1259,22 @@ with tab_welcome:
         if IMG_BIAS_COMPARISON.exists():
             _center_image(str(IMG_BIAS_COMPARISON), max_width=1000)
             st.caption(
-                "Climatological mean bias (°C, Prediction − ERA5) for three baselines, with "
-                "coastlines. Bicubic merely interpolates the GCM, so systematic cold/warm "
-                "biases (up to ±8 °C) survive. The distribution-based (DOTC) and generative "
+                "Climatological mean bias (Prediction − ERA5) for three baselines, with "
+                "coastlines. Bicubic merely interpolates the GCM, so its systematic "
+                "cold/warm biases survive. The distribution-based (DOTC) and generative "
                 "(CM) baselines explicitly correct against ERA5 and remove most of it. The "
+                "effect is large: over France (2000–2020), the temperature bias-MAE vs ERA5 "
+                "is 0.88 K for bicubic against 0.12 K for the best-corrected baseline; for "
+                "10-m wind it is 0.66 vs 0.08 m/s. The "
                 "bias that remains is exactly what the accuracy metrics on the other tabs "
                 "quantify — and it is precisely the kind of error that feeds straight into a "
                 "power-system model's demand forecasts."
             )
         else:
-            st.info("Generate `src/dashboard/static/bias_comparison.png` with `generate_welcome_images.py`.")
+            if DEV_NOTES:
+                st.info("Generate `src/dashboard/static/bias_comparison.png` with `generate_welcome_images.py`.")
+            else:
+                st.caption("_Bias-comparison figure not included in this build._")
 
         # ── Section 7: Protocol: not pure perfect prognosis ─────────────────
         st.markdown('<a id="ww-sec7"></a>', unsafe_allow_html=True)
@@ -1266,8 +1317,8 @@ with tab_welcome:
             "decisions, so the ⚡ Load Forecasting tab pushes each downscaled scenario "
             "through a **fixed**, already-trained net-load forecaster and compares what "
             "breaks.\n\n"
-            "**The target.** French **net load** — `NetDemand = load − wind − solar` "
-            "(RTE national figures, daily series). It is the quantity a system operator must "
+            f"**The target.** **Net load** for {_wl_region} — `NetDemand = load − wind − solar`, "
+            "a daily series. It is the quantity a system operator must "
             "balance in real time, and it is where errors in `tas` (demand), "
             "`sfcWind`/`sfcWindmax` (wind), and `psl`/`pr` (weather regimes, hydro) "
             "interact.\n\n"
@@ -1277,11 +1328,12 @@ with tab_welcome:
             "response to the weather inputs driving demand. Three spatial representations "
             "are compared: **(1) Full Grid PCA** — the 15 leading PCA components of the "
             "daily spatial field (57×65 grid, ~93% of variance); **(2) Regional "
-            "Barycenters** — population-weighted weather for 12 French regions; "
+            "Barycenters** — population-weighted weather for 12 sub-regions; "
             "**(3) Regional + Renewables** — the regional representation plus explicit wind "
-            "and solar resource indices.\n\n"
+            "and solar resource indices. (The multi-region lenses apply to France; the other "
+            "regions ship the full-grid PCA.)\n\n"
             "**The weather modeling.** The same TAM is trained once on **ERA5 reanalysis "
-            "weather (2012–2021)** plus historical RTE load. For evaluation it is never "
+            "weather (2012–2021)** plus historical national load. For evaluation it is never "
             "retrained: each downscaled scenario simply substitutes the method's own "
             "predictions (next-day temperature, wind, precipitation from the downscaled "
             "`tas`, `sfcWind`, `sfcWindmax`, `pr`, `psl` fields, lagged one day) into the "
@@ -1293,7 +1345,7 @@ with tab_welcome:
             "to the ERA5-truth one with **KS distance, Wasserstein distance (MW), KL "
             "divergence, and absolute errors at the extreme quantiles AE@q01 / AE@q99 (MW)** — "
             "i.e. how badly a method misses the most costly (very low / very high net-load) "
-            "days. Results live in `TAM_downscaling/metrics_*.json`; the tab offers error-bar "
+            "days. The tab offers error-bar "
             "comparisons, quantile-distortion plots, a radar per method, net-demand CDFs, and "
             "breakdowns by season and by wind level."
         )
@@ -1304,6 +1356,21 @@ with tab_welcome:
             for area, cite in ELECTRICITY_REFS.items():
                 st.markdown(f"- **{area}.** {cite}")
 
+        # ── Cite & data ─────────────────────────────────────────────────────
+        with st.expander("## 📖 Cite this benchmark, and where the data lives"):
+            st.markdown(
+                "- **Paper.** *In preparation* — a DOI/preprint link will be added here when "
+                "available (author list to be confirmed).\n"
+                f"- **Code.** Open source under the MIT licence: "
+                f"[this GitHub repository]({GITHUB_URL}).\n"
+                "- **Results data.** Downscaled predictions, metrics and TAM archives are "
+                "published as a public dataset: `Jkeisler75/benchmark-downscaling-results` "
+                "(Hugging Face Datasets). A Zenodo DOI archive is planned.\n\n"
+                "If this dashboard or benchmark supports your work, please cite the paper "
+                "(once published) and link this repository. Code is under MIT; the data "
+                "follows the terms of the underlying ERA5 (Copernicus) and CMIP6 datasets."
+            )
+
         # ── How to read ─────────────────────────────────────────────────────
         st.markdown('<a id="ww-how"></a>', unsafe_allow_html=True)
         st.markdown("## How to read this dashboard")
@@ -1313,7 +1380,7 @@ with tab_welcome:
             ("📈 Line plots", "seasonal cycles, annual means, distributions & spatial spectra"),
             ("🗺 Spatial maps", "bias / correlation / climate-signal maps per method"),
             ("🔗 Inter-variable", "do methods keep observed links between variables?"),
-            ("⚡ Load Forecasting", "forecasting French net electricity load with the fixed downstream model"),
+            ("⚡ Load Forecasting", "forecasting net electricity load with the fixed downstream model"),
         ]:
             st.markdown(f"- **{tab_name}** — {desc}")
 
@@ -1323,7 +1390,7 @@ with tab_welcome:
         m_detailed = st.toggle("Show detailed documentation (equations, hyperparameters)", key="welcome_methods_detailed")
         if IMG_METHOD_SPECTRUM.exists():
             st.image(str(IMG_METHOD_SPECTRUM), use_container_width=True)
-        for m in ["bicubic", "bcsd", "cdft", "dotc", "idownscale", "corrdiff_qm", "cm"]:
+        for m in ["bicubic", "bcsd", "cdft", "dotc", "idownscale", "corrdiff_qm", "cm", "serpentflowclim"]:
             doc = METHOD_DOCS[m]
             link = METHOD_LINKS.get(m, {})
             links_md = ""
@@ -1686,10 +1753,13 @@ with tab_lines:
             )
 
             if not _sites:
-                st.info(
-                    f"No day-of-year data for {sel_var_ln} yet — run "
-                    "`python src/evaluation/backfill_energy.py` or re-run evaluate.py."
-                )
+                if DEV_NOTES:
+                    st.info(
+                        f"No day-of-year data for {sel_var_ln} yet — run "
+                        "`python src/evaluation/backfill_energy.py` or re-run evaluate.py."
+                    )
+                else:
+                    st.info(f"No day-of-year data for {sel_var_ln} in this selection.")
             else:
                 st.caption(
                     "Daily climatology over the evaluation period (365 bins, 29 Feb removed) "
@@ -1884,14 +1954,17 @@ with tab_lines:
         if fig.data:
             st.plotly_chart(fig, use_container_width=True)
         elif line_type != "doy":   # doy already shows its own hint above
-            st.info(f"No plot data for {sel_var_ln} / {line_type}. Re-run evaluate.py.")
+            st.info(f"No plot data for {sel_var_ln} / {line_type}." + (" Re-run evaluate.py." if DEV_NOTES else ""))
 
     else:
-        st.info(
-            "**Interactive plots not yet available.**  \n"
-            "Re-run `evaluate.py` with the updated script to generate `plot_data.json`. "
-            "Showing static per-method PNGs for now."
-        )
+        if DEV_NOTES:
+            st.info(
+                "**Interactive plots not yet available.**  \n"
+                "Re-run `evaluate.py` with the updated script to generate `plot_data.json`. "
+                "Showing static per-method PNGs for now."
+            )
+        else:
+            st.info("Showing static per-method PNGs.")
         type_to_prefix = {"seasonal": "seasonal", "annual": "annual", "cdf": "cdf"}
         prefix = type_to_prefix.get(line_type)
         if prefix:
@@ -2210,13 +2283,13 @@ with tab_intervar:
         )
         st.plotly_chart(fig_iv, use_container_width=True)
     else:
-        st.info("No inter-variable scalar metrics found. Run evaluate.py first.")
+        st.info("No inter-variable scalar metrics found for this selection" + (" — run evaluate.py first." if DEV_NOTES else "."))
 
     st.markdown("---")
     st.subheader("Pointwise correlation maps")
     st.caption(
         "Spatial maps of per-grid-point temporal correlation between variable pairs. "
-        "After re-running evaluate.py, separate ERA5 / prediction / bias panels are saved."
+        "Separate ERA5 / prediction / bias panels are shown where available."
     )
 
     # Discover available pairs from per-method PNGs
@@ -2231,7 +2304,7 @@ with tab_intervar:
                     all_pairs.append(pair)
 
     if not all_pairs:
-        st.info("No inter-variable correlation maps found. Run evaluate.py first.")
+        st.info("No inter-variable correlation maps found for this selection" + (" — run evaluate.py first." if DEV_NOTES else "."))
     else:
         sel_pair = st.selectbox("Variable pair", all_pairs, key="iv_pair")
         v1, v2 = sel_pair.split("_", 1)
@@ -2277,10 +2350,13 @@ with tab_intervar:
     _ev_pairs = [(m, (plot_data.get(m) or {}).get("_events")) for m in sel_methods]
     _ev_pairs = [(m, e) for m, e in _ev_pairs if e]
     if not _ev_pairs:
-        st.info(
-            "No energy-event data yet — run "
-            "`python src/evaluation/backfill_energy.py` or re-run evaluate.py."
-        )
+        if DEV_NOTES:
+            st.info(
+                "No energy-event data yet — run "
+                "`python src/evaluation/backfill_energy.py` or re-run evaluate.py."
+            )
+        else:
+            st.info("No energy-event data for this selection.")
     else:
         _base = _ev_pairs[0][1]
         _meta = _base.get("meta", {})
@@ -2733,4 +2809,7 @@ if tab_load is not None:
             else:
                 st.info("No method metrics found in JSON.")
         else:
-            st.warning(f"TAM metrics file not found at {jpath}")
+            if DEV_NOTES:
+                st.warning(f"TAM metrics file not found at {jpath}")
+            else:
+                st.info("No TAM metrics available for this selection.")
