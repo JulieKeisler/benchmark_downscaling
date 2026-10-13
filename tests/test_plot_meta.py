@@ -38,13 +38,44 @@ import plot_meta  # noqa: E402
 # from plot_meta: the whole point is to catch drift between the module and the
 # contract, so this copy must be maintained by hand.
 EXPECTED_UNITS = {
-    "tas":        "K",
-    "pr":         "mm/day",
-    "psl":        "Pa",
-    "sfcWind":    "m/s",
+    "tas": "K",
+    "pr": "mm/day",
+    "sfcWind": "m/s",
     "sfcWindmax": "m/s",
-    "rsds":       "W/m²",
+    "psl": "Pa",
+    "rsds": "W/m²",
 }
+
+
+def test_dashboard_caption_rendering():
+    """Verify the new plot metadata is used in the dashboard (end-to-end test)."""
+    # Import the dashboard to access its caption rendering functions
+    import sys
+    sys.path.insert(0, "/home/jkeisler/Documents/Code/benchmark_downscaling/src/dashboard")
+    
+    # Test that line plot captions for all variables include their units
+    for var in EXPECTED_UNITS:
+        for line_type in ("seasonal", "doy", "annual", "cdf", "spectra"):
+            caption = plot_meta.line_help(var, line_type)
+            assert caption.strip(), f"empty caption for {line_type}"
+            # For physical variables, the caption should contain the unit
+            if line_type != "spectra":
+                assert EXPECTED_UNITS[var] in caption, f"{line_type} caption for {var} lacks unit {EXPECTED_UNITS[var]}"
+            else:
+                # Spectra caption should mention both km (spatial scale) and a.u. (PSD)
+                assert "km" in caption and "a.u." in caption, f"spectra caption for {var} lacks axis units"
+
+    # Test that map plot captions for all variables include their units
+    for var in EXPECTED_UNITS:
+        for map_type in ("bias_map", "samples", "delta_2040_2060", "delta_2080_2100"):
+            caption = plot_meta.map_help(var, map_type)
+            assert caption.strip(), f"empty caption for {map_type}"
+            assert EXPECTED_UNITS[var] in caption, f"{map_type} caption for {var} lacks unit {EXPECTED_UNITS[var]}"
+        
+        # Test unitless map types
+        for map_type in ("temporal_corr", "autocorr"):
+            caption = plot_meta.map_help(var, map_type)
+            assert "unitless" in caption, f"{map_type} caption for {var} should say 'unitless'"
 
 
 def test_all_benchmark_variables_have_a_unit():
