@@ -120,6 +120,17 @@ _PIPELINE_HTML = """
 # so adding a method there automatically surfaces in the dashboard.
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "evaluation"))
+# Own directory: so the sibling plot_meta module (units + plot captions) is
+# importable when this file is run via runpy.run_path() by the deploy
+# entry points — run_path does NOT add the script's dir to sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Plot metadata (units, per-plot captions, plot-type lists) — single source of
+# truth, unit-tested. The selectboxes below are built from LINE_PLOT_TYPES /
+# MAP_PLOT_TYPES so a new type must be declared (and captioned) here.
+from plot_meta import (  # noqa: E402
+    VAR_UNITS, vlabel, line_help, map_help, colorbar_label,
+    LINE_PLOT_TYPES, MAP_PLOT_TYPES,
+)
 try:
     from baselines import METHOD_LABELS, is_unpublished
 except ImportError:  # tolerate a stale checkout where baselines pre-dates the helper
@@ -385,7 +396,7 @@ METRIC_DOCS = {
         "name": "Bias MAE",
         "group": "vs ERA5",
         "simple": "Spatial mean of absolute temporal-mean bias (pred − ERA5). Captures systematic offsets.",
-        "detailed": "MAE over grid points of the time-mean bias field bias(pred) − bias(ERA5). Lower is better. Units are physical units of the variable (K, mm/day, m/s, Pa).",
+        "detailed": "MAE over grid points of the time-mean bias field bias(pred) − bias(ERA5). Lower is better. Units are physical units of the variable (K, mm/day, m/s, Pa, W/m²).",
         "eq": r"\mathrm{MAE}\!\left[ \overline{pred}_s - \overline{era5}_s \right]",
     },
     "std_error": {
@@ -890,6 +901,9 @@ METRIC_LABELS = {
     "Δ signal 2080–2100":   "Δ signal 2080–2100 (vs GCM)",
 }
 HIGHER_BETTER = {"temporal_corr_annual", "temporal_corr"}
+
+# VAR_UNITS / vlabel / per-plot captions live in the sibling plot_meta module
+# (imported above) so they are unit-testable without a Streamlit runtime.
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1738,9 +1752,14 @@ with tab_lines:
     has_plot_data = bool(plot_data)
 
     line_type = st.selectbox(
-        "Plot type", ["seasonal", "doy", "annual", "cdf", "spectra"], key="ln_type",
+        "Plot type", list(LINE_PLOT_TYPES), key="ln_type",
     )
     sel_var_ln = st.selectbox("Variable", all_vars, key="ln_var")
+
+    # Plain-language explainer for the selected line plot (a few sentences each),
+    # shown above the figure so the reader knows what is being plotted and in
+    # which unit. Text lives in plot_meta so it is unit-tested.
+    st.caption(line_help(sel_var_ln, line_type))
 
     if has_plot_data:
         fig = go.Figure()
@@ -1762,10 +1781,10 @@ with tab_lines:
                     name=mlabel(m), line=dict(color=_method_color(m), width=2),
                 ))
             fig.update_layout(
-                title=f"Seasonal cycle — {sel_var_ln}",
+                title=f"Seasonal cycle — {vlabel(sel_var_ln)}",
                 xaxis=dict(title="Month", tickvals=list(range(1, 13)),
                            ticktext=list("JFMAMJJASOND")),
-                yaxis_title=sel_var_ln, height=430,
+                yaxis_title=vlabel(sel_var_ln), height=430,
                 legend=dict(orientation="h", yanchor="bottom", y=-0.28),
             )
 
@@ -1797,12 +1816,6 @@ with tab_lines:
                 else:
                     st.info(f"No day-of-year data for {sel_var_ln} in this selection.")
             else:
-                st.caption(
-                    "Daily climatology over the evaluation period (365 bins, 29 Feb removed) "
-                    "of the region-wide mean or of a single grid point. The lower panel shows "
-                    "the absolute day-to-day change: spikes on month boundaries flag methods "
-                    "that correct each calendar month independently (BCSD, CDF-t, ...)."
-                )
                 c1, c2, c3 = st.columns([2, 2, 3])
                 with c1:
                     _mode = st.radio("Spatial reduction", ["Region mean", "Site"],
@@ -1878,11 +1891,13 @@ with tab_lines:
                                  ticktext=list("JFMAMJJASOND"))
                 fig.update_xaxes(title_text="", row=1, col=1)
                 fig.update_xaxes(title_text="Day of year", row=rows, col=1)
-                fig.update_yaxes(title_text=sel_var_ln, row=1, col=1)
+                fig.update_yaxes(title_text=vlabel(sel_var_ln), row=1, col=1)
                 if show_diff:
-                    fig.update_yaxes(title_text="|Δ| / day", row=2, col=1)
+                    fig.update_yaxes(
+                        title_text=f"|Δ| ({VAR_UNITS.get(sel_var_ln, 'units')}) / day",
+                        row=2, col=1)
                     fig.update_layout(
-                        title=f"Day-of-year cycle — {sel_var_ln}{_site_lbl}",
+                        title=f"Day-of-year cycle — {vlabel(sel_var_ln)}{_site_lbl}",
                         height=620,
                         # Keep the legend on top: a wrapped legend below the
                         # figure stacks over the small delta panel.
@@ -1893,7 +1908,7 @@ with tab_lines:
                     )
                 else:
                     fig.update_layout(
-                        title=f"Day-of-year cycle — {sel_var_ln}{_site_lbl}",
+                        title=f"Day-of-year cycle — {vlabel(sel_var_ln)}{_site_lbl}",
                         height=430,
                         legend=dict(orientation="h", yanchor="bottom", y=-0.18),
                         hovermode="x unified",
@@ -1933,8 +1948,8 @@ with tab_lines:
                     line=dict(color=_method_color(m), width=2, dash="dash"),
                 ))
             fig.update_layout(
-                title=f"Annual means — {sel_var_ln}",
-                xaxis_title="Year", yaxis_title=sel_var_ln, height=430,
+                title=f"Annual means — {vlabel(sel_var_ln)}",
+                xaxis_title="Year", yaxis_title=vlabel(sel_var_ln), height=430,
                 legend=dict(orientation="h", yanchor="bottom", y=-0.28),
             )
 
@@ -1956,8 +1971,9 @@ with tab_lines:
                     name=mlabel(m), line=dict(color=_method_color(m), width=2),
                 ))
             fig.update_layout(
-                title=f"CDF — {sel_var_ln}",
-                xaxis_title=sel_var_ln, yaxis_title="Cumulative probability",
+                title=f"CDF — {vlabel(sel_var_ln)}",
+                xaxis_title=vlabel(sel_var_ln),
+                yaxis_title="Cumulative probability (0–1)",
                 height=430,
                 legend=dict(orientation="h", yanchor="bottom", y=-0.28),
             )
@@ -1980,7 +1996,7 @@ with tab_lines:
                     name=mlabel(m), line=dict(color=_method_color(m), width=2),
                 ))
             fig.update_layout(
-                title=f"Isotropic spatial power spectrum — {sel_var_ln}",
+                title=f"Isotropic spatial power spectrum — {vlabel(sel_var_ln)}",
                 xaxis=dict(title="Spatial scale (km)", type="log", autorange="reversed"),
                 yaxis=dict(title="PSD (a.u.)", type="log"),
                 height=430,
@@ -2025,8 +2041,7 @@ with tab_maps:
     with col1:
         plot_type = st.selectbox(
             "Plot type",
-            ["bias_map", "temporal_corr", "autocorr", "samples",
-             "delta_2040_2060", "delta_2080_2100"],
+            list(MAP_PLOT_TYPES),
             format_func=lambda x: {
                 "bias_map": "Bias map",
                 "temporal_corr": "Temporal correlation",
@@ -2040,34 +2055,9 @@ with tab_maps:
     with col2:
         sel_var_map = st.selectbox("Variable", all_vars, key="mv")
 
-    _PLOT_HELP = {
-        "bias_map": (
-            "Mean spatial bias over the evaluation period (mean(pred) − mean(ERA5)). "
-            "Red = overestimate, blue = underestimate. Shared color scale across methods."
-        ),
-        "temporal_corr": (
-            "Pointwise temporal correlation (annual means) between each method and the GCM "
-            "at every grid cell — how faithfully the method reproduces the GCM's "
-            "year-to-year evolution."
-        ),
-        "autocorr": (
-            "Lag-1 autocorrelation difference (pred − GCM): how the method alters the GCM's "
-            "day-to-day persistence."
-        ),
-        "samples": (
-            "Five randomly drawn days (same dates for every panel). Rows = GCM, ERA5 and each "
-            "method; columns = the 5 dates. Compare daily spatial fields, not time-means."
-        ),
-        "delta_2040_2060": (
-            "Climate signal 2040–2060 vs 2000–2020: Δ = mean(future) − mean(hist). "
-            "Leftmost panel is the GCM reference; the others are per-method signals (shared scale)."
-        ),
-        "delta_2080_2100": (
-            "Climate signal 2080–2100 vs 2000–2020: Δ = mean(future) − mean(hist). "
-            "Leftmost panel is the GCM reference; the others are per-method signals (shared scale)."
-        ),
-    }
-    st.caption(_PLOT_HELP[plot_type])
+    # Caption and colorbar label (unit-aware) come from plot_meta — unit-tested.
+    st.caption(map_help(sel_var_map, plot_type))
+    _cb_label = colorbar_label(sel_var_map, plot_type)
 
     # ── Shared-colorbar spatial maps ───────────────────────────────────────
     # Render each map from the per-method npz data with one color scale shared
@@ -2177,14 +2167,14 @@ with tab_maps:
             if im is not None:
                 ax_flat = [a for row in axes.tolist() for a in row]
                 fig.colorbar(im, ax=ax_flat, shrink=0.6, pad=0.02,
-                             label=sel_var_map, format="%.3g")
+                             label=_cb_label, format="%.3g")
             st.pyplot(fig)
             plt.close(fig)
 
         _render_samples_grid(maps_data)
         st.caption("Same 5 dates for every row. Rows: GCM input, ERA5 reference, "
                    f"per-method prediction. Dates shown in each panel title "
-                   f"({sel_var_map}).")
+                   f"({vlabel(sel_var_map)}).")
     else:
         # Shared color scale across all selected methods (per variable), including
         # the GCM reference so the Δ maps are directly comparable with it.
@@ -2253,7 +2243,7 @@ with tab_maps:
                 shown.append(ax)
             if im is not None:
                 fig.colorbar(im, ax=shown, shrink=0.85, pad=0.02,
-                             label=f"{sel_var_map}", format="%.3g")
+                             label=_cb_label, format="%.3g")
             st.pyplot(fig)
             plt.close(fig)
 
@@ -2272,7 +2262,9 @@ with tab_intervar:
     st.subheader("Inter-variable correlation MAE (pred vs ERA5)")
     st.caption(
         "Mean absolute error of pointwise temporal correlation between variable pairs. "
-        "Lower = better preservation of observed cross-variable dependencies."
+        "Lower = better preservation of observed cross-variable dependencies. "
+        "Units: correlation coefficient (unitless, 0 = identical dependencies; "
+        "a perfect miss on an anti-correlated pair would be 2)."
     )
 
     # Scalar table (one column per method)
@@ -2313,7 +2305,7 @@ with tab_intervar:
         fig_iv.update_layout(
             barmode="group",
             title="Inter-variable correlation MAE by pair",
-            yaxis_title="MAE of temporal correlation",
+            yaxis_title="MAE of temporal correlation (unitless)",
             height=370,
             legend=dict(orientation="h", yanchor="bottom", y=-0.35),
         )
@@ -2324,8 +2316,11 @@ with tab_intervar:
     st.markdown("---")
     st.subheader("Pointwise correlation maps")
     st.caption(
-        "Spatial maps of per-grid-point temporal correlation between variable pairs. "
-        "Separate ERA5 / prediction / bias panels are shown where available."
+        "Spatial maps of per-grid-point temporal correlation between variable pairs, "
+        "where each panel shows one variable pair and distinguishes the ERA5 reference "
+        "from the prediction. Separate ERA5 / prediction / bias panels are shown where "
+        "available. Units: correlation coefficient (unitless, −1 to +1; 1 = perfectly "
+        "in phase)."
     )
 
     # Discover available pairs from per-method PNGs
