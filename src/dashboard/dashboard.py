@@ -311,7 +311,7 @@ def _render_3panel_plotly(m: str, ref_title: str, ref_arr: np.ndarray, pred_titl
     fig.add_trace(go.Heatmap(z=pred_arr, x=lon, y=lat, colorscale="Viridis", showscale=False), row=1, col=2)
     fig.add_trace(go.Heatmap(z=diff_arr, x=lon, y=lat, colorscale="RdBu_r", zmid=0, showscale=True), row=1, col=3)
     fig.update_layout(height=320, margin=dict(t=40, b=10, l=10, r=10), title_text=mlabel(m), title_font_size=12)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch", key=f"3panel_{m}")
 
 
 # ── Pedagogic documentation (Welcome tab + search) ────────────────────────────
@@ -1003,7 +1003,7 @@ with tab_welcome:
         on_select="rerun",
         selection_mode="points",
         key="region_map",
-        use_container_width=True,
+        width="stretch",
     )
 
     # Interpret plotly selection events (Streamlit ≥ 1.35) into experiment selection.
@@ -1571,7 +1571,7 @@ with tab_table:
             return styles
 
         styled = df.style.apply(_style_row, axis=1).format("{:.4f}", na_rep="—")
-        st.dataframe(styled, use_container_width=True)
+        st.dataframe(styled, width="stretch")
         st.caption(
             "One column per method — green = best per row. "
             "All metrics lower-is-better except temporal corr (higher = better).  \n"
@@ -1617,8 +1617,8 @@ with tab_table:
             ), row=1, col=_c)
         _fig_dh.update_yaxes(autorange="reversed")
         _fig_dh.update_layout(height=max(300, 45 * len(_dh_methods) + 120),
-                              margin=dict(t=60, b=40))
-        st.plotly_chart(_fig_dh, use_container_width=True)
+                               margin=dict(t=60, b=40))
+        st.plotly_chart(_fig_dh, width="stretch", key="dh_plotly")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 2 — Radar
@@ -1704,7 +1704,7 @@ with tab_radar:
                 height=520,
                 legend=dict(orientation="h", yanchor="bottom", y=-0.18),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch", key="radar_all_vars")
             st.caption("Each axis normalised by mean across methods. temporal_corr* inverted (1−r).")
 
         else:  # By variable
@@ -1737,13 +1737,13 @@ with tab_radar:
                             line=dict(color=_method_color(m), width=2),
                         ))
     
-                    fig.update_layout(
-                        polar=dict(radialaxis=dict(visible=True, showticklabels=False)),
-                        title=f"Normalised metrics — {var}",
-                        height=450,
-                        legend=dict(orientation="h", yanchor="bottom", y=-0.2),
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                        fig.update_layout(
+                            polar=dict(radialaxis=dict(visible=True, showticklabels=False)),
+                            title=f"Normalised metrics — {var}",
+                            height=450,
+                            legend=dict(orientation="h", yanchor="bottom", y=-0.2),
+                        )
+                        st.plotly_chart(fig, width="stretch", key=f"radar_{var}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 3 — Line plots (plotly, all methods on one figure)
@@ -2004,7 +2004,7 @@ with tab_lines:
             )
 
         if fig.data:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch", key=f"lineplot_{sel_var_ln}_{line_type}")
         elif line_type != "doy":   # doy already shows its own hint above
             st.info(f"No plot data for {sel_var_ln} / {line_type}." + (" Re-run evaluate.py." if DEV_NOTES else ""))
 
@@ -2287,7 +2287,7 @@ with tab_intervar:
 
         st.dataframe(
             iv_df.style.apply(_iv_style_col, axis=0).format("{:.4f}"),
-            use_container_width=True,
+            width="stretch",
         )
 
         # Bar chart
@@ -2309,7 +2309,7 @@ with tab_intervar:
             height=370,
             legend=dict(orientation="h", yanchor="bottom", y=-0.35),
         )
-        st.plotly_chart(fig_iv, use_container_width=True)
+        st.plotly_chart(fig_iv, width="stretch", key="intervar_plotly")
     else:
         st.info("No inter-variable scalar metrics found for this selection" + (" — run evaluate.py first." if DEV_NOTES else "."))
 
@@ -2435,7 +2435,7 @@ with tab_intervar:
                     legend=dict(orientation="h", yanchor="top", y=-0.30,
                                 font=dict(size=11)),
                 )
-                st.plotly_chart(_f, use_container_width=True)
+                st.plotly_chart(_f, width="stretch", key=f"event_{_evname}_{_stat}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 6 — Load Forecasting (TAM). Region-aware: france has the full set of
@@ -2587,14 +2587,14 @@ if tab_load is not None:
                     rangeslider_visible=True,
                     rangeselector=dict(
                         buttons=[
-                            dict(count=1, label="1Y", step="year", stepmode="backward"),
-                            dict(count=3, label="3Y", step="year", stepmode="backward"),
-                            dict(count=5, label="5Y", step="year", stepmode="backward"),
-                            dict(count=10, label="10Y", step="year", stepmode="backward"),
-                            dict(step="all", label="Full"),
-                        ]),
+                             dict(count=1, label="1Y", step="year", stepmode="backward"),
+                             dict(count=3, label="3Y", step="year", stepmode="backward"),
+                             dict(count=5, label="5Y", step="year", stepmode="backward"),
+                             dict(count=10, label="10Y", step="year", stepmode="backward"),
+                             dict(step="all", label="Full"),
+                         ]),
                 )
-                st.plotly_chart(_fig_fc, use_container_width=True)
+                st.plotly_chart(_fig_fc, width="stretch", key="fullcycle_plotly")
                 st.markdown("---")
 
             rows = []
@@ -2624,7 +2624,7 @@ if tab_load is not None:
     
                 st.dataframe(
                     df_tam.style.apply(_highlight_best_tam, axis=0).format("{:.4f}"),
-                    use_container_width=True,
+            width="stretch",
                 )
     
                 # Interactive Plotly Line / Comparison Plots (same setup as line plot panel)
@@ -2843,8 +2843,7 @@ if tab_load is not None:
                             height=430,
                             legend=dict(orientation="h", yanchor="bottom", y=-0.3),
                         )
-    
-                st.plotly_chart(fig_tam_plots, use_container_width=True)
+                        st.plotly_chart(fig_tam_plots, width="stretch", key="tam_cdf_plotly")
     
             else:
                 st.info("No method metrics found in JSON.")

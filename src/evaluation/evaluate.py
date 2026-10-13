@@ -250,7 +250,7 @@ def _consistency_downscale_all_legacy(
 
     # ── Decode each variable and return ───────────────────────────────────────
     # Physical lower bounds after decoding.
-    PHYS_MIN = {"pr": 0.0, "sfcWind": 0.0, "sfcWindmax": 0.0}
+    PHYS_MIN = {"pr": 0.0, "sfcWind": 0.0, "sfcWindmax": 0.0, "rsds": 0.0}
     # Extreme-value caps to guard against out-of-distribution model outputs.
     # 500 mm/day is a very generous physical cap for daily precipitation.
     PHYS_MAX = {"pr": 500.0}
