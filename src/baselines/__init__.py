@@ -17,9 +17,9 @@ Adding a new per-variable method:
     1. Implement it and register in ``_build_registry`` below.
     2. Add an inference_<name>.py script using save_predictions.
 """
-from .labels import METHOD_LABELS
+from .labels import METHOD_LABELS, is_unpublished
 
-__all__ = ["METHOD_REGISTRY", "METHOD_LABELS"]
+__all__ = ["METHOD_REGISTRY", "METHOD_LABELS", "is_unpublished"]
 
 
 def _build_registry() -> dict:
