@@ -133,16 +133,16 @@ python src/data_download/cds/download_cmip6.py
 
 ## Baselines
 
-| Method | Code | Type | Reference |
+| Method | Code | Calibration type | Reference / what it does |
 |--------|------|------|-----------|
-| Bicubic | `src/baselines/inference_bicubic.py` | Inline | Interpolates GCM to ERA5 grid via bicubic splines. No learning. |
-| BCSD | `src/baselines/inference_bcsd.py` | Pre-computed (–pred-dir) | Wood et al. (2002). QM on monthly means + spatial disaggregation. |
-| CDF-t | `src/baselines/inference_cdft.py` | Inline | Michelangeli et al. (2009), via SBCK (`pip install sbck`). Sliding-window CDF-t. |
-| DOTC | `src/baselines/inference_dotc.py` | Pre-computed (–pred-dir) | Vrac et al. (2012). Trend-preserving CDF-t: detrend → QM → re-add trend. |
-| iDownscale | `src/baselines/inference_idownscale.py` | Pre-computed (–pred-dir) | Soares et al. (2024). CERFACS perfect-prognosis U-Net. |
-| CorrDiff-QM | `src/baselines/inference_corrdiff.py` | Pre-computed (–pred-dir) | Mardani et al. (2025). Two-stage residual diffusion (UNet regression + Denoising Diffusion) + quantile mapping, stochastic ensemble. |
-| ConsistencyModel | `src/baselines/inference_cm.py` | Pre-computed (–pred-dir) | Song et al. (2023) restricted flow-matching, ERA5-only. |
-| SerpentFlow-CLIM | `src/baselines/inference_serpentflowclim.py` | Pre-computed (–pred-dir) | Zheng et al. (2025). Flow-matching generative downscaling conditioned on GHG + ERA5 static fields. |
+| Bicubic | `src/baselines/inference_bicubic.py` | Interpolation | Keys cubic-convolution interpolation of the GCM onto the ERA5 grid. No learning. Reference for all vs-GCM metrics. |
+| BCSD | `src/baselines/inference_bcsd.py` | MOS / bias correction | After Wood et al. (2002, 2004). Per-cell, per-month QM of monthly means on the GCM grid, applied to the GCM's own days as a monthly delta, + ERA5 fine-scale climatology. Not trend-preserving (values beyond the 1980–1999 range are held flat). |
+| CDF-t | `src/baselines/inference_cdft.py` | MOS / bias correction | Michelangeli et al. (2009), via SBCK (`pip install sbck`). Per cell and calendar month on the ERA5 grid, 20-year sliding windows. |
+| DOTC | `src/baselines/inference_dotc.py` | MOS / bias correction | Benchmark-specific detrended CDF-t (linear detrend → SBCK CDF-t → calibration slope re-added). Univariate — not the multivariate dOTC of Robin et al. (2019). |
+| iDownscale | `src/baselines/inference_idownscale.py` | Hybrid PP + BC | CERFACS iDownscale U-Net (cf. Soares et al. 2024) trained on ERA5 coarse→fine pairs; GCM CDF-t-corrected on the coarse grid at inference. |
+| CorrDiff-QM | `src/baselines/inference_corrdiff.py` | Hybrid PP + BC | Mardani et al. (2025). Regression U-Net + residual DDPM trained on ERA5; daily coarse-grid QM of the GCM at inference; output = 10-member mean. |
+| CM | `src/baselines/inference_cm.py` | Hybrid PP + BC | Hess et al. (2025), Song et al. (2023). Consistency model distilled from an EDM diffusion model trained on ERA5; QDM-corrected GCM noised at t* = 1 and denoised in one step; single draw. |
+| SerpentFlow-CLIM | `src/baselines/inference_serpentflowclim.py` | Hybrid PP + BC | SerpentFlow (Keisler et al., arXiv:2601.01979), climatology-aware variant (Yousef, Keisler & Charantonis, in prep.). Flow matching trained on ERA5; conditioned on the low-pass GCM with a CDF-t-corrected climatology and ERA5 static fields; output = 8-member mean. |
 
 Pre-computed methods require their inference script to be run first, then evaluated with `--pred-dir`. Each region is evaluated against its benchmark GCM
 (native layout: one coupling per region) and in factorial layout (all GCM × region couplings); see `src/configs/data/regions.yaml`.

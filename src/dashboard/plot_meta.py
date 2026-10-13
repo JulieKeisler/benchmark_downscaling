@@ -82,11 +82,12 @@ def line_help(var: str, line_type: str) -> str:
             f"lower panel {u} per day."
         ),
         "annual": (
-            "Yearly means over the evaluation period for ERA5 (grey, dotted), "
-            "the driving GCM where available (black) and each method (dashed). "
-            "It checks whether a method tracks the observed year-to-year level "
-            "rather than drifting; the GCM line is the free-running input, not a "
-            f"target. Units: {vlabel(var)}."
+            "Region-mean yearly means: ERA5 over 2000–2020 (grey, dotted), the "
+            "bicubic-interpolated driving GCM (black) and each method (dashed) "
+            "over 2000–2100. It shows whether a method keeps the observed level "
+            "today and follows the GCM's long-term change; the GCM's individual "
+            "years are free-running weather, not a target. "
+            f"Units: {vlabel(var)}."
         ),
         "cdf": (
             "Empirical cumulative distribution function (CDF) of all daily "
@@ -96,12 +97,14 @@ def line_help(var: str, line_type: str) -> str:
             f"{vlabel(var)}; y = cumulative probability (0–1, unitless)."
         ),
         "spectra": (
-            "Isotropic spatial power spectral density: how much variance sits at "
-            "each spatial scale (abscissa = wavelength in km, log-spaced, "
-            "decreasing to the right). ERA5 (black) is the observational target on "
-            "the 0.25° grid; methods that lose small-scale variance flatten at "
-            "high frequency (small scales). Units: x = km; y = PSD (a.u., same "
-            "normalisation across all curves)."
+            "Isotropic spatial power spectral density, averaged over the "
+            "evaluation days: how much variance sits at each spatial scale "
+            "(abscissa = wavelength in km, log-spaced, decreasing to the right). "
+            "Only the large scales scored by the spectral metric are shown "
+            "(≈220–1000 km); wavelengths assume 0.25° ≈ 27.8 km in both "
+            "directions (no cos(latitude) factor), so they overstate east–west "
+            "scales at mid-latitudes. ERA5 (black) is the target. Units: x = km; "
+            "y = PSD (a.u., same normalisation across all curves)."
         ),
     }
     return helps[line_type]

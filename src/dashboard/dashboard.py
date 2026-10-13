@@ -3,7 +3,7 @@
 
 Run with:
     pip install streamlit plotly
-    streamlit run scripts/dashboard.py
+    streamlit run src/dashboard/dashboard.py
 """
 from __future__ import annotations
 
@@ -27,17 +27,7 @@ RESULTS_ROOT = Path(os.environ["RESULTS_ROOT"]) if os.environ.get("RESULTS_ROOT"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Downstream TAM lens data (outside this repo). Overridable for hosted deploys,
 # which bundle a small copy alongside the app.
-# Resolve TAM directory:
-#   1. Use the `TAM_DIR` environment variable if set.
-#   2. Fallback to a sibling `../tam_data` relative to the repo root.
-#   3. Fallback to the absolute default used previously.
-fallback_tam_dir = Path(__file__).resolve().parent.parent / ".." / "tam_data"
-TAM_DIR = Path(
-    os.environ.get(
-        "TAM_DIR",
-        fallback_tam_dir if fallback_tam_dir.is_dir() else "/home/jkeisler/Documents/Code/TAM_downscaling"
-    )
-)
+TAM_DIR = Path(os.environ.get("TAM_DIR", "/home/jkeisler/Documents/Code/TAM_downscaling"))
 
 # Experiment/region labels — each is a top-level subdir of results/
 EXPERIMENT_LABELS = {
@@ -80,9 +70,9 @@ GCM_LABELS = {
 }
 
 GCM_GRIDS = {
-    "ipsl_cm6a_lr": "≈2.5° (11×7)",
-    "cnrm_cm6_1":   "≈0.5° (10×12)",
-    "cesm2":        "≈1° (15×13)",
+    "ipsl_cm6a_lr": "≈1.3° × 2.5° (11×7)",
+    "cnrm_cm6_1":   "≈1.4° (10×12)",
+    "cesm2":        "≈0.9° × 1.25° (15×13)",
 }
 
 # Coarse mesh (rows × cols) per GCM, for the recipe box
@@ -213,10 +203,12 @@ def _gcm_label(gcm: str) -> str:
     scen = GCM_SCEN.get(gcm, "")
     return f"{g} ({scen})" if scen else g
 
-experiments = sorted(
-    d.name for d in RESULTS_ROOT.iterdir()
-    if d.name in NATIVE_GCM and _has_methods(d)
-) if RESULTS_ROOT.exists() else []
+# Region order follows NATIVE_GCM (France first): the welcome copy and the
+# static figures describe France, so it is the landing region.
+experiments = [
+    r for r in NATIVE_GCM
+    if (RESULTS_ROOT / r).is_dir() and _has_methods(RESULTS_ROOT / r)
+] if RESULTS_ROOT.exists() else []
 if not experiments:
     st.error(f"No experiment subdirs found in {RESULTS_ROOT}")
     st.stop()
@@ -237,11 +229,12 @@ _available_gcms_region = _available_gcms(_selected)
 if not _available_gcms_region:
     st.error(f"No GCM results found under {RESULTS_ROOT / _selected}")
     st.stop()
-# Reset the GCM choice when the region changes (stale widget value guard).
-if "_gcm_region" in st.session_state and st.session_state["_gcm_region"] != _selected:
-    st.session_state["_gcm_region"] = _selected
-    if "_gcm" in st.session_state:
-        del st.session_state["_gcm"]
+# Reset the GCM choice to the region's native GCM when the region changes.
+# The widget key is "gcm": keeping its stale value would silently show a
+# factorial coupling (e.g. France × CNRM-CM6-1) whenever the previous region's
+# GCM also exists as a factorial subdir of the new region.
+if st.session_state.get("_gcm_region") != _selected:
+    st.session_state.pop("gcm", None)
 st.session_state["_gcm_region"] = _selected
 _selected_gcm = st.selectbox(
     "GCM", _available_gcms_region,
@@ -332,7 +325,7 @@ METHOD_DOCS = {
         "type": "Deterministic · interpolation",
         "family": "statistical",
         "simple": "Smoothly interpolates the coarse GCM field onto the ERA5 grid. No learning, no bias correction.",
-        "detailed": "Bicubic spline interpolation (Keys cubic convolution kernel, a = −0.5) applied separably in latitude and longitude — equivalent to CDO remapbic. Precipitation is clipped to zero. Serves as the lower-bound baseline: any method that cannot beat bicubic on spatial metrics adds no value.",
+        "detailed": "Bicubic convolution interpolation (Keys kernel, a = −0.5) applied separably in latitude then longitude, similar to CDO remapbic. Precipitation and radiation are clipped to zero. Serves as the lower-bound baseline for accuracy — and, because every vs-GCM metric compares against this same interpolated GCM, it is the reference (perfect score) for the fidelity metrics.",
         "eq": r"\hat{y}_t = \mathcal{I}\left( x_t,\ \mathrm{lat}_{\mathrm{ERA5}},\ \mathrm{lon}_{\mathrm{ERA5}} \right)",
         "grading": "Deterministic, zero-parameter.",
     },
@@ -340,35 +333,35 @@ METHOD_DOCS = {
         "name": "BCSD",
         "type": "Statistical · QM + spatial disaggregation",
         "family": "statistical",
-        "simple": "Monthly quantile mapping at GCM resolution, then daily disaggregation and fine-scale ERA5 detail added back.",
-        "detailed": "Wood et al. 2004. Coarsen ERA5 to the GCM grid, fit a monthly empirical quantile map (200 levels) from GCM to ERA5-coarse means, apply to GCM monthly means, disaggregate daily with an additive/multiplicative monthly delta (clipped to 0–10 for pr), bicubic-regrid to the ERA5 grid and add observed fine-scale climatological detail.",
-        "eq": r"\hat{y}_{\mathrm{daily}} = x_{\mathrm{daily}} \times \mathrm{clip}\!\left(\tfrac{\mathrm{bc}_{\mathrm{mon}}}{x_{\mathrm{mon}}},\ 0,\ 10\right)",
-        "grading": "Deterministic; designed for climatological correction, can distort year-to-year signal for large-scale fields (e.g. psl).",
+        "simple": "Monthly quantile mapping at GCM resolution, applied to the GCM's own days as a monthly delta, then fine-scale ERA5 climatological detail added back.",
+        "detailed": "After Wood et al. (2004). Interpolate ERA5 to the GCM grid, fit a per-cell, per-calendar-month empirical quantile map from GCM to ERA5 monthly means over 1980–1999 (20 values per cell-month), apply it to the GCM monthly means, and shift the GCM's own daily values by the monthly correction (additive; multiplicative for pr with the ratio clipped to [0, 5]). The result is cubic-interpolated to the ERA5 grid and the observed fine-scale monthly climatology is added back. The empirical map holds values flat outside the calibration range, so future GCM values beyond the 1980–1999 range are capped — this removes a large part of the warming signal.",
+        "eq": r"\hat{y}_{\mathrm{daily}} = x_{\mathrm{daily}} \times \mathrm{clip}\!\left(\tfrac{\mathrm{bc}_{\mathrm{mon}}}{x_{\mathrm{mon}}},\ 0,\ 5\right)\ \ (\mathrm{pr})",
+        "grading": "Deterministic; designed for climatological correction. Not trend-preserving: it distorts the year-to-year signal and caps the long-term change of every variable whose future values leave the calibration range (e.g. tas).",
     },
     "cdft": {
         "name": "CDF-t",
         "type": "Statistical · empirical CDF transform",
         "family": "statistical",
-        "simple": "Per-grid-cell, per-month CDF transform that accounts for a shift in the GCM distribution between calibration and evaluation periods.",
-        "detailed": "Michelangeli et al. 2009. Maps the GCM evaluation CDF through the calibration-period GCM inverse and the ERA5 calibration CDF. Handles future out-of-sample values via support expansion and uses a hard wet-day threshold for precipitation. Applied in ERA5 grid space after bicubic regridding.",
+        "simple": "Per-grid-cell, per-month CDF transform that accounts for the shift of the GCM distribution between the calibration period and each 20-year projection window.",
+        "detailed": "Michelangeli et al. 2009, via SBCK (CDFt, version 2). The GCM historical and scenario runs are bicubic-regridded to the ERA5 grid; for each grid cell and calendar month the calibration-period (1980–1999) GCM and ERA5 CDFs define the transfer, applied to 20-year sliding projection windows (step 10 years, central 10 years kept). Non-negative variables are clipped at zero; no separate wet-day threshold is applied.",
         "eq": r"F_{R_f}(x) = F_{R_p}\!\left( F_{G_p}^{-1}\!\left( F_{G_f}(x) \right) \right)",
         "grading": "Deterministic; better for future projections than plain QM.",
     },
     "dotc": {
         "name": "DOTC",
-        "type": "Statistical · trend-preserving CDF-t",
+        "type": "Statistical · CDF-t with linear detrending",
         "family": "statistical",
-        "simple": "CDF-t applied to detrended series, then the GCM's forced climate-change trend is added back — keeps the trend while correcting the distribution.",
-        "detailed": "Vrac et al. 2012. Detrend GCM and ERA5 over the calibration period (linear trend per grid point), apply CDF-t (via SBCK) to the detrended values, re-add the original GCM trend. Uses a 20-year sliding window over the evaluation period (step 10 y) to handle non-stationarity. Non-negative variables are clipped at zero.",
-        "eq": r"\hat{y} = \mathrm{CDFt}\!\left( y_{\mathrm{det}}\right) + \mathrm{trend}_{G}",
-        "grading": "Deterministic; preserves the GCM's forced trend.",
+        "simple": "The CDF-t pipeline applied to linearly detrended series, with the calibration-period GCM slope added back. Despite its label it is univariate — not the multivariate dOTC of Robin et al. (2019).",
+        "detailed": "Same windows and grid as CDF-t (SBCK, per cell and calendar month, 20-year windows, step 10 y). Within each window a linear trend is fitted against the sample index on the 1980–1999 GCM and ERA5 series, removed, CDF-t is applied, and the calibration-period GCM slope is re-added. Because the index restarts in every window, the re-added term acts as a near-constant offset of about twenty years of the 1980–1999 GCM slope rather than the GCM's 2000–2100 trend. Clipping happens before the trend is re-added, so outputs can be slightly negative.",
+        "eq": r"\hat{y} = \mathrm{CDFt}\!\left( x_{\mathrm{det}}\right) + \beta_{G,\,1980\text{–}1999}\,(t - \bar{t}_{\mathrm{cal}})",
+        "grading": "Deterministic; transmits the GCM change like CDF-t, plus a calibration-slope offset.",
     },
     "idownscale": {
         "name": "iDownscale",
         "type": "Neural · U-Net regression (perfect prognosis)",
         "family": "neural",
-        "simple": "A U-Net is trained on ERA5 alone (coarsened → fine pairs) to learn a super-resolution mapping, with a CDF-t pre-correction at coarse resolution during inference.",
-        "detailed": "CERFACS iDownscale (EGU26 short course). Pairs are built by subsampling ERA5 (stride 4) and regridding back up. MSE loss with month embedding; all variables normalised to [−1, 1]. At inference the GCM is CDF-t bias-corrected on the coarse grid, bicubic-upsampled, then fed to the network. Plain UNet, init_features=32.",
+        "simple": "A U-Net is trained on ERA5 alone (coarsened → fine pairs) to learn a super-resolution mapping; at inference the GCM is first CDF-t-corrected against ERA5 at coarse resolution (a hybrid of perfect prognosis and bias correction).",
+        "detailed": "CERFACS iDownscale (EGU26 short course). Training pairs: ERA5 1980–1999 resized to 14×16 and upsampled back (coarse) → ERA5 (fine). MSE loss, month as sin/cos input channels, variables scaled to [−1, 1] (log for pr). At inference the GCM is bicubic-regridded to a stride-4 ERA5 grid (15×17), CDF-t-corrected against ERA5 with the GCM historical run 1980–1999 (20-year windows), upsampled and fed to the network. Plain UNet, init_features=32. Note the coarse grid differs between training and inference.",
         "eq": r"\mathcal{L} = \mathbb{E}\!\left[ \left\| f_\theta\!\left( \phi(x_t),\ m_t \right) - \phi(y_t) \right\|^2 \right]",
         "grading": "Deterministic neural; learns observed spatial structure.",
     },
@@ -376,28 +369,28 @@ METHOD_DOCS = {
         "name": "CorrDiff-QM",
         "type": "Neural · stochastic residual diffusion",
         "family": "neural",
-        "simple": "A regression U-Net predicts the mean; a DDPM learns the residual distribution around it. A 10-member ensemble is averaged for fair comparison.",
-        "detailed": "Mardani et al. 2025 (adapted). Stage 1: plain U-Net predicts the conditional mean from the coarsened input + month. Stage 2: a DiffusersUNet (~27M params) denoises the residual with a cosine DDPM (T=1000). Inference: coarse per-cell/per-month quantile mapping (1980–1999 only), bicubic upsample, strided reverse sampling (50 steps), ensemble of 10 averaged; pr/sfcWind clipped at 0.",
+        "simple": "A regression U-Net predicts the mean; a DDPM learns the residual distribution around it. The output is the mean of a 10-member ensemble, which shrinks the residual variance.",
+        "detailed": "Mardani et al. 2025 (adapted). Stage 1: plain U-Net predicts the conditional mean from the coarsened ERA5 input + month. Stage 2: a DiffusersUNet denoises the residual with a cosine DDPM (T=1000). Both trained on ERA5 1980–1999. Inference: daily per-cell, per-month empirical quantile mapping of the GCM onto ERA5 on the coarse grid (fit 1980–1999; values outside the calibration range are held flat, so the mapping is not trend-preserving), bicubic upsampling, strided reverse sampling (50 steps), mean of 10 members; pr, sfcWind, sfcWindmax and rsds clipped at 0.",
         "eq": r"\hat{y}^{\,(n)}_t = \mu_t + r^{(n)}_t",
-        "grading": "Stochastic; probabilistic spread; averaged to produce one field.",
+        "grading": "Stochastic model, evaluated as a 10-member mean (deterministic in effect, reduced variance).",
     },
     "cm": {
         "name": "CM",
         "type": "Neural · consistency model (single-step generative)",
         "family": "neural",
-        "simple": "A consistency model distills the diffusion trajectory into a single denoising step; the GCM is conditioned by pert. it at a fixed noise level.",
-        "detailed": "Hess et al. 2025 / Song et al. 2023 (adapted). Student + EMA teacher trained on the self-consistency property with curriculum N from 10→150 bins (EDM schedule, Tmax=2.0). Inference: bicubic-regridded GCM is encoded and perturbed at t*=0.5, then one denoising step projects it onto the learned ERA5 manifold. UNetAttention, 5 variables jointly.",
-        "eq": r"\hat{y} = f_\theta\!\left( \phi(\mathcal{I}(\mathrm{GCM}_t)) + \varepsilon\, t^{*},\ t^{*} \right)",
-        "grading": "Stochastic-generative; one-step (fast).",
+        "simple": "A consistency model, distilled from a diffusion model trained on ERA5 alone, maps a noised, quantile-delta-mapped GCM field back onto the ERA5 manifold in a single denoising step.",
+        "detailed": "Hess et al. 2025 / Song et al. 2023 (adapted). An EDM score network (DiffusersUNet) is trained on ERA5 1980–1999 (month as the only conditioning; no coarse input), then distilled into a consistency model (EMA teacher, curriculum N 10→150, T_max = 80). Inference: the bicubic-regridded GCM is bias-corrected by quantile delta mapping against ERA5 (GCM historical 1980–1999, per cell and month), noised at t* = 1.0 and projected onto the learned ERA5 manifold with one denoising step. All variables jointly (6; 5 over the central US). One random draw per day.",
+        "eq": r"\hat{y} = f_\theta\!\left( \phi(\mathrm{QDM}(\mathcal{I}(\mathrm{GCM}_t))) + \varepsilon\, t^{*},\ t^{*} \right)",
+        "grading": "Stochastic-generative; one-step (fast); a single unseeded draw.",
     },
     "serpentflowclim": {
         "name": "SerpentFlow-CLIM",
         "type": "Generative · conditional flow matching (climatology-aware)",
         "family": "neural",
         "simple": "A flow-matching model generates fine fields from a climatology-aware conditioning: the GCM's Fourier low-pass plus a CDF-t-corrected seasonal climatology. An 8-member ODE ensemble is averaged.",
-        "detailed": "Haidar (2026). The source encoding combines a spatial Fourier low-pass of the GCM with its low-frequency seasonal climatology, whose bias is removed by a CDF-t correction calibrated on 1980–1999. A UNetFlow (6 variables, 4 static channels, 365 day-of-year embeddings) learns the conditional flow on 1980–1999 ERA5+GCM tensors; inference integrates an 8-member dopri5 ODE ensemble and re-injects the corrected GCM climatology for tas. Non-negative variables (pr, sfcWind, sfcWindmax, rsds) are clipped at zero.",
+        "detailed": "Yousef, Keisler & Charantonis (in prep.), building on SerpentFlow. The model is trained on ERA5 only (1980–1999): a Fourier low-pass of ERA5 plus high-frequency noise is mapped to ERA5. At inference the conditioning is the low-pass GCM whose 20-year day-of-year climatology is replaced by a CDF-t-corrected one (calibrated 1980–1999). A UNetFlow (6 variables, 5 over the central US; 4 static channels; day-of-year embedding) integrates an 8-member dopri5 ODE ensemble whose mean is the output; the corrected GCM climatology is re-injected for tas. Non-negative variables are clipped at zero.",
         "eq": r"\mathcal{L}_{\mathrm{FM}} = \mathbb{E}_{t\sim\mathcal{U}(0,1)}\!\left[\, \left\| v_\theta(\phi_t, t) - u \right\|^2 \,\right]",
-        "grading": "Stochastic-generative; climatology-aware conditioning, 8-member ensemble averaged.",
+        "grading": "Stochastic-generative; climatology-aware conditioning; evaluated as an 8-member mean (reduced variance).",
     },
 }
 
@@ -406,7 +399,7 @@ METRIC_DOCS = {
         "name": "Bias MAE",
         "group": "vs ERA5",
         "simple": "Spatial mean of absolute temporal-mean bias (pred − ERA5). Captures systematic offsets.",
-        "detailed": "MAE over grid points of the time-mean bias field bias(pred) − bias(ERA5). Lower is better. Units are physical units of the variable (K, mm/day, m/s, Pa, W/m²).",
+        "detailed": "Mean over grid points of |mean_t(pred) − mean_t(ERA5)|, evaluation period 2000–2020. Lower is better. Units are physical units of the variable (K, mm/day, m/s, Pa, W/m²).",
         "eq": r"\mathrm{MAE}\!\left[ \overline{pred}_s - \overline{era5}_s \right]",
     },
     "std_error": {
@@ -454,22 +447,22 @@ METRIC_DOCS = {
     "spectral_mae": {
         "name": "Spectral MAE",
         "group": "vs ERA5",
-        "simple": "Normalised RMSE of isotropic spatial power spectra — does the method reproduce fine-scale spatial structure?",
-        "detailed": "Radially-averaged 2D Fourier power spectra of predictions vs ERA5, normalised RMSE over scales. Interpolation-only methods underestimate high-wavenumber (small-scale) variance.",
+        "simple": "Normalised RMSE between the time-mean isotropic spatial power spectra of predictions and ERA5, restricted to the large scales (wavelengths ≈ 220–1000 km).",
+        "detailed": "Radially averaged 2D Fourier power spectra (log-spaced bins in 10⁻⁶–10⁻⁴ cycles/m; grid spacing taken as 0.25° × 111 km without a cos(latitude) factor), averaged over days; the score is RMSE(pred PSD − ERA5 PSD) / mean(ERA5 PSD) over the lowest 30 % of bins only. Despite its name it is not an MAE, and it does not test the fine scales (< ≈200 km) that downscaling adds — it measures whether the large-scale variance is right.",
         "eq": "",
     },
     "temporal_corr_annual": {
         "name": "Temporal corr annual",
         "group": "vs GCM",
         "simple": "Pearson correlation of annual-mean anomalies vs the GCM — how well the forced year-to-year signal is preserved. Higher is better.",
-        "detailed": "This is the meaningful GCM fidelity metric. Daily correlation is trivially ~1 for deterministic functions of the GCM; annual-mean anomaly correlation is not.",
+        "detailed": "Spatial mean of per-cell correlations between annual means of the prediction and of the bicubic-interpolated GCM over 2000–2100 (so it includes the forced trend). Bicubic scores 1 by construction.",
         "eq": r"r\!\left( \mathrm{anom}_{pred},\ \mathrm{anom}_{GCM} \right)",
     },
     "temporal_corr": {
         "name": "Temporal corr daily",
         "group": "vs GCM",
-        "simple": "Pearson daily temporal correlation vs the GCM. Note: trivially ~1 for deterministic methods.",
-        "detailed": "Included only for completeness — deterministic methods are functions of the GCM so daily correlation saturates. Prefer temporal corr annual.",
+        "simple": "Pearson daily temporal correlation vs the bicubic-interpolated GCM over 2000–2100 (1 for bicubic by construction).",
+        "detailed": "Monotone per-cell corrections keep it close to 1; methods that inject noise or generate fine-scale detail lower it. A low value is not by itself an error, since the GCM's daily weather is not the target — prefer temporal corr annual for signal preservation.",
         "eq": "",
     },
     "annual_anomaly_bias": {
@@ -489,15 +482,15 @@ METRIC_DOCS = {
     "Δ signal 2040–2060": {
         "name": "Δ signal 2040–2060",
         "group": "vs GCM",
-        "simple": "MAE between the method's and GCM's relative climate change signal at mid-century.",
-        "detailed": "Compares % change (future vs historical) between method and GCM for 2040–2060. Only methods with predictions through 2100 produce these.",
+        "simple": "Mean absolute difference between the method's and the GCM's relative change, 2040–2060 vs 2000–2020, in % of the 2000–2020 mean.",
+        "detailed": "Per grid cell, Δ = (future mean − 2000–2020 mean) / |2000–2020 mean| × 100. For tas (K) and psl (Pa) the percentage is taken of an absolute temperature or pressure, so values are small (0.1 % of tas ≈ 0.3 K); compare methods within a variable, not across variables.",
         "eq": "",
     },
     "Δ signal 2080–2100": {
         "name": "Δ signal 2080–2100",
         "group": "vs GCM",
         "simple": "MAE between the method's and GCM's relative climate change signal at end-of-century.",
-        "detailed": "Same as the 2040–2060 signal but for 2080–2100.",
+        "detailed": "Same as the 2040–2060 signal but for 2080–2100 vs 2000–2020 (in %, per grid cell).",
         "eq": "",
     },
 }
@@ -679,14 +672,14 @@ def _load_world_lines():
 # pub  → published paper or public reference implementation of the method
 # impl → implementation used inside this benchmark
 METHOD_LINKS = {
-    "bicubic":     {"pub": "Standard bicubic spline interpolation (no single paper; see Bentley 1980 / Catmull–Rom family)", "impl": "src/baselines/inference_bicubic.py"},
+    "bicubic":     {"pub": "Keys (1981) cubic convolution interpolation (no downscaling paper; standard regridding)", "impl": "src/baselines/inference_bicubic.py"},
     "bcsd":        {"pub": "Wood et al. (2004), Climatic Change 62:189–216", "impl": "src/baselines/inference_bcsd.py"},
     "cdft":        {"pub": "Michelangeli et al. (2009), GRL 36:L11708 — via SBCK (`pip install sbck`)", "impl": "src/baselines/inference_cdft.py"},
-    "dotc":        {"pub": "Vrac et al. (2012), HESS 16:4697 — trend-preserving CDF-t, via SBCK", "impl": "src/baselines/inference_dotc.py"},
+    "dotc":        {"pub": "Benchmark-specific: CDF-t (Michelangeli et al. 2009, via SBCK) with linear detrending — not the multivariate dOTC of Robin et al. (2019), HESS 23:773", "impl": "src/baselines/inference_dotc.py"},
     "idownscale":  {"pub": "CERFACS iDownscale EGU26 short course — https://github.com/cerfacs-globc/idownscale/tree/master/docs/egu26_short_course", "impl": "src/baselines/inference_idownscale.py"},
-    "corrdiff_qm": {"pub": "Mardani et al. (2025), arXiv:2209.07619 — CorrDiff residual corrective diffusion", "impl": "src/baselines/inference_corrdiff.py"},
-    "cm":          {"pub": "Hess et al. (2025) Nature Machine Intelligence — consistency-model downscaling; distills Song et al. (2023) arXiv:2303.01469 — ref. code: https://github.com/p-hss/consistency-climate-downscaling", "impl": "src/baselines/inference_cm.py + train_consistency.py"},
-    "serpentflowclim": {"pub": "SerpentFlow — arXiv:2601.01979 (conditional flow matching); climatology-aware CLIM adaptation per Haidar (2026)", "impl": "src/baselines/inference_serpentflowclim.py + serpentflow_clim/"},
+    "corrdiff_qm": {"pub": "Mardani et al. (2025), Communications Earth & Environment 6:124 (arXiv:2309.15214) — CorrDiff residual corrective diffusion", "impl": "src/baselines/inference_corrdiff.py"},
+    "cm":          {"pub": "Hess et al. (2025) Nature Machine Intelligence 7:363 — consistency-model downscaling; distills Song et al. (2023) arXiv:2303.01469 — ref. code: https://github.com/p-hss/consistency-climate-downscaling", "impl": "src/baselines/inference_cm.py + train_consistency.py"},
+    "serpentflowclim": {"pub": "SerpentFlow — Keisler et al., arXiv:2601.01979 (conditional flow matching); climatology-aware CLIM variant: Yousef, Keisler & Charantonis (in prep.)", "impl": "src/baselines/inference_serpentflowclim.py + serpentflow_clim/"},
 }
 
 METRIC_IMPL = {
@@ -734,13 +727,13 @@ BENCHMARK_CONTEXT = {
         "isolates the baseline effect, but we lose RCM process realism and multi-GCM spread."
     ),
     "ISIMIP — <a href='https://doi.org/10.5194/gmd-10-4321-2017' target='_blank'>Frieler et al. (2017)</a>": (
-        "<b>Protocol:</b> harmonised <b>bias-correction</b> (ISIMIP3BASD) of GCM output feeding "
+        "<b>Protocol:</b> harmonised, trend-preserving <b>bias adjustment</b> (ISIMIP3BASD, Lange 2019) of GCM output feeding "
         "sectoral (incl. energy) impact models. "
-        "<b>Settings:</b> tens of GCMs, global coverage, high-end RCP/SSP scenarios, daily output "
-        "kept on the coarsened GCM grid. "
+        "<b>Settings:</b> a handful of GCMs per round, global coverage, RCP/SSP scenarios, daily "
+        "output on a common 0.5° grid. "
         "<b>Metrics:</b> downstream impact-model outcomes. "
-        "<b>What differs:</b> ISIMIP corrects biases <i>without</i> spatial downscaling; we go to "
-        "~25 km, score both against observations <i>and</i> against the GCM's own future signal, and "
+        "<b>What differs:</b> ISIMIP adjusts one product with one method at 0.5° (its statistical "
+        "downscaling step is part of that method); we go to ~25 km, score both against observations <i>and</i> against the GCM's own future signal, and "
         "compare many methods against each other (not a single correction)."
     ),
     "WeatherBench / WeatherBench 2 — <a href='https://doi.org/10.1029/2020MS002203' target='_blank'>Rasp et al. (2020)</a>, <a href='https://doi.org/10.1029/2023MS004019' target='_blank'>Rasp et al. (2024)</a>": (
@@ -814,8 +807,10 @@ PROTOCOL_PRIMER = (
     "bicubic interpolates with no training at all; BCSD, CDF-t and DOTC are "
     "MOS/bias-correction methods fit directly against the GCM historical output (their "
     "calibration *is* GCM-vs-ERA5, not reanalysis-vs-reanalysis); the neural/generative "
-    "baselines (CorrDiff, iDownScale, CM, SerpentFlow-CLIM) are trained on ERA5 coarse→fine "
-    "pairs in the PP spirit and then applied to the GCM. "
+    "baselines (CorrDiff-QM, iDownscale, CM, SerpentFlow-CLIM) are hybrids — their networks are "
+    "trained on ERA5 alone in the PP spirit, but at inference the GCM is first bias-corrected "
+    "against ERA5 (quantile mapping, CDF-t or quantile delta mapping fitted on the GCM historical "
+    "run 1980–1999) before the network sees it. "
     "Because calibration philosophies therefore differ *within* the benchmark, we hold the GCM, "
     "grid, period and train/test split fixed for all baselines and score each one on BOTH "
     "(i) reproduction of observed distributions and (ii) preservation of the GCM's "
@@ -1181,8 +1176,8 @@ with tab_welcome:
         if IMG_RESOLUTION_GAP.exists():
             _center_image(str(IMG_RESOLUTION_GAP), max_width=720)
             st.caption(
-                "The core problem in one picture. Same January day, same variable: the raw "
-                "GCM (right, ≈2.5°, 11×7 cells) collapses the whole region into a handful of "
+                "The core problem in one picture (France, IPSL-CM6A-LR). Same January day, same "
+                "variable: the raw GCM (right, ≈1.3° × 2.5°, 11×7 cells) collapses the whole region into a handful of "
                 "blocky values; ERA5 (left, ≈0.25°, 57×65 cells) resolves real regional "
                 "detail. Downscaling must invent realistic fine detail that is consistent "
                 "with *both* the GCM's climate signal and the observed climate."
@@ -1245,7 +1240,7 @@ with tab_welcome:
             f"| **Region box** | {_wl_region} — 57×65 cells at ≈0.25° |\n"
             f"| **Reference** | ERA5 pseudo-observations; daily {_wl_era5} |\n"
             f"| **GCM** | {_wl_gcm}; daily; IPSL-CM6A-LR & CNRM-CM6-1 under SSP3-7.0, CESM2 under SSP2-4.5 |\n"
-            "| **Calibration** | 1980–1999 — distribution baselines fit on the selected GCM; neural baselines on ERA5 coarse→fine pairs |\n"
+            "| **Calibration** | 1980–1999 — distribution baselines fit on the selected GCM; neural baselines trained on ERA5, with a GCM-vs-ERA5 pre-correction at inference |\n"
             "| **Accuracy evaluation** | 2000–2020 vs ERA5 |\n"
             "| **Fidelity evaluation** | 2000–2100 vs the GCM; Δ-signal 2040–2060 & 2080–2100 |\n"
             "| **Downstream (TAM)** | trained 2012–2021 on ERA5 + load; applied unchanged 2000–2022 |\n"
@@ -1364,13 +1359,14 @@ with tab_welcome:
             "plus day-of-week, school/bank/Christmas-holiday dummies, and a smooth nonlinear "
             "response to the weather inputs driving demand. Three spatial representations "
             "are compared: **(1) Full Grid PCA** — the 15 leading PCA components of the "
-            "daily spatial field (57×65 grid, ~93% of variance); **(2) Regional "
-            "Barycenters** — population-weighted weather for 12 sub-regions; "
+            "daily spatial field (57×65 grid, ≈80% of variance); **(2) Regional "
+            "Barycenters** — population-weighted weather for 12 sub-regions (15 regional PCs, ≈93% of variance); "
             "**(3) Regional + Renewables** — the regional representation plus explicit wind "
             "and solar resource indices. (The multi-region lenses apply to France; the other "
             "regions ship the full-grid PCA.)\n\n"
             "**The weather modeling.** The same TAM is trained once on **ERA5 reanalysis "
-            "weather (2012–2021)** plus historical national load. For evaluation it is never "
+            "weather (2012–2021)** plus the region's observed net demand (central US: from "
+            "July 2018, when its record starts). For evaluation it is never "
             "retrained: each downscaled scenario simply substitutes the method's own "
             "predictions (next-day temperature, wind, precipitation from the downscaled "
             "`tas`, `sfcWind`, `sfcWindmax`, `pr`, `psl` fields, lagged one day) into the "
@@ -1426,7 +1422,7 @@ with tab_welcome:
         st.markdown("#### The baselines: from interpolation to generative models")
         m_detailed = st.toggle("Show detailed documentation (equations, hyperparameters)", key="welcome_methods_detailed")
         if IMG_METHOD_SPECTRUM.exists():
-            st.image(str(IMG_METHOD_SPECTRUM), use_container_width=True)
+            st.image(str(IMG_METHOD_SPECTRUM), width="stretch")
         for m in ["bicubic", "bcsd", "cdft", "dotc", "idownscale", "corrdiff_qm", "cm", "serpentflowclim"]:
             doc = METHOD_DOCS[m]
             link = METHOD_LINKS.get(m, {})
@@ -1585,12 +1581,13 @@ with tab_table:
         st.caption(
             "One column per method — green = best per row. "
             "All metrics lower-is-better except temporal corr (higher = better).  \n"
-            "**Temporal corr daily ≈ 1 everywhere**: all methods are deterministic "
-            "functions of the GCM, so daily correlation with GCM input is trivially ~1. "
-            "Use *temporal corr annual* instead.  \n"
-            "**BCSD high annual anomaly bias (psl)**: per-month QM + spatial disaggregation "
-            "distorts the year-to-year evolution of large-scale fields like psl. "
-            "BCSD is designed for climatological bias correction, not signal preservation."
+            "**vs-GCM metrics are measured against the bicubic-interpolated GCM**, so "
+            "bicubic scores perfectly on them by construction. Daily temporal correlation is "
+            "lowered by any method that injects noise or generates detail; prefer *temporal "
+            "corr annual* for signal preservation.  \n"
+            "**BCSD**: its empirical quantile map holds values flat outside the 1980–1999 "
+            "range, so it distorts the year-to-year evolution and caps the long-term change "
+            "(largest annual-anomaly and Δ-signal errors for tas and psl)."
         )
     else:
         st.info("No data for the selected filters.")
@@ -1606,8 +1603,10 @@ with tab_table:
         from plotly.subplots import make_subplots
         st.subheader("Delta change scores — heatmap")
         st.caption(
-            "Mean absolute error between method's and GCM's relative climate change signal "
-            "(% change future vs historical). Lower = better. "
+            "Mean absolute error between the method's and the GCM's relative climate change "
+            "signal (% change of the future window vs 2000–2020, per grid cell). Lower = better. "
+            "For tas (K) and psl (Pa) the % is of an absolute value, so scores are small "
+            "(0.1 % of tas ≈ 0.3 K): compare methods within a column, not across columns. "
             "Only methods with predictions through 2100 produce these scores (see Δ signal rows above)."
         )
         _fig_dh = make_subplots(rows=1, cols=len(_dh_periods),
@@ -1746,14 +1745,16 @@ with tab_radar:
                             fill="toself", opacity=0.5, name=mlabel(m),
                             line=dict(color=_method_color(m), width=2),
                         ))
-    
-                        fig.update_layout(
-                            polar=dict(radialaxis=dict(visible=True, showticklabels=False)),
-                            title=f"Normalised metrics — {var}",
-                            height=450,
-                            legend=dict(orientation="h", yanchor="bottom", y=-0.2),
-                        )
-                        st.plotly_chart(fig, width="stretch", key=f"radar_{var}")
+
+                    # One chart per variable, after all methods are added: drawing it
+                    # inside the method loop re-used key radar_{var} and crashed.
+                    fig.update_layout(
+                        polar=dict(radialaxis=dict(visible=True, showticklabels=False)),
+                        title=f"Normalised metrics — {var}",
+                        height=450,
+                        legend=dict(orientation="h", yanchor="bottom", y=-0.2),
+                    )
+                    st.plotly_chart(fig, width="stretch", key=f"radar_{var}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 3 — Line plots (plotly, all methods on one figure)
@@ -2135,7 +2136,6 @@ with tab_maps:
                 import cartopy.feature as cfeature
             except ImportError:
                 ccrs, cfeature = None, None
-            import cartopy.crs as ccrs_mod
 
             ref = next(iter(mdata.values()))
             dates = list(ref["dates"])
@@ -2151,13 +2151,13 @@ with tab_maps:
             if hi - lo < 1e-12:
                 hi = lo + 1.0
 
-            proj = ccrs_mod.PlateCarree() if ccrs is not None else None
+            proj = ccrs.PlateCarree() if ccrs is not None else None
             fig, axes = plt.subplots(
                 len(rows), n_days, figsize=(1.9 * n_days + 1.2, 1.7 * len(rows) + 1.3),
                 subplot_kw={"projection": proj} if proj else {},
                 squeeze=False, layout="constrained",
             )
-            tr = ccrs_mod.PlateCarree() if ccrs else None
+            tr = ccrs.PlateCarree() if ccrs is not None else None
             im = None
             for r, (label, arr) in enumerate(rows):
                 for c, dte in enumerate(dates):
@@ -2167,7 +2167,8 @@ with tab_maps:
                         continue
                     z = np.asarray(arr[c], dtype=float)
                     im = ax.pcolormesh(ref["lon"], ref["lat"], z, cmap="viridis",
-                                       vmin=lo, vmax=hi, transform=tr)
+                                       vmin=lo, vmax=hi,
+                                       **({"transform": tr} if tr is not None else {}))
                     if ccrs is not None:
                         ax.coastlines(linewidth=0.4)
                         ax.set_extent([ref["lon"].min(), ref["lon"].max(),
@@ -2216,7 +2217,6 @@ with tab_maps:
                 import cartopy.feature as cfeature
             except ImportError:
                 ccrs, cfeature = None, None
-            import cartopy.crs as ccrs_mod
 
             def _add_geo(ax, lon, lat):
                 if ccrs is not None:
@@ -2229,7 +2229,7 @@ with tab_maps:
             # Fixed 2-slot row so every map has the same panel size; an unpaired
             # trailing map keeps slot width (second slot just hidden).
             n_slots = 2
-            proj = ccrs_mod.PlateCarree() if ccrs is not None else None
+            proj = ccrs.PlateCarree() if ccrs is not None else None
             fig, axes = plt.subplots(
                 1, n_slots, figsize=(5.2 * n_slots + 0.8, 4.0),
                 subplot_kw={"projection": proj} if proj else {},
@@ -2238,7 +2238,7 @@ with tab_maps:
             fig.subplots_adjust(wspace=0.1)
             if len(row_methods) < n_slots:
                 axes[0, len(row_methods)].axis("off")
-            tr = ccrs_mod.PlateCarree() if ccrs else None
+            tr = ccrs.PlateCarree() if ccrs is not None else None
             im = None
             shown = []
             for ax, m in zip(axes[0], row_methods):
@@ -2247,7 +2247,8 @@ with tab_maps:
                 if not np.isfinite(z).all():
                     z = np.where(np.isfinite(z), z, np.nan)
                 im = ax.pcolormesh(d["lon"], d["lat"], z, cmap=cmap,
-                                   vmin=zmin, vmax=zmax, transform=tr)
+                                   vmin=zmin, vmax=zmax,
+                                   **({"transform": tr} if tr is not None else {}))
                 _add_geo(ax, d["lon"], d["lat"])
                 ax.set_title(mlabel(m), fontsize=10)
                 shown.append(ax)
@@ -2356,7 +2357,7 @@ with tab_intervar:
             if era5_img.exists():
                 col_ref1, col_ref2, col_ref3 = st.columns([1, 2, 1])
                 with col_ref2:
-                    st.image(str(era5_img), use_container_width=True)
+                    st.image(str(era5_img), width="stretch")
                 break
 
         st.markdown("---")
@@ -2373,7 +2374,7 @@ with tab_intervar:
                     st.markdown(f"**{mlabel(m)}**")
                     img = RESULTS_DIR / m / "plots" / f"intervar_corr_{v1}_{v2}.png"
                     if img.exists():
-                        st.image(str(img), use_container_width=True)
+                        st.image(str(img), width="stretch")
                     else:
                         st.info("No image available")
 
@@ -2458,7 +2459,7 @@ if tab_load is not None:
         st.caption(
             "Downstream evaluation of climate downscaling via a fixed Time series Additive Model (TAM) "
             "forecasting daily net load: NetDemand = load − wind − solar. "
-            "The model is trained on ERA5 reanalysis (2012–2021) and applied unchanged to each downscaled scenario (2000–2022)."
+            "The model is trained on ERA5 reanalysis (2012–2021, restricted to days with observed net demand — from July 2018 for the central US) and applied unchanged to each downscaled scenario (2000–2022)."
         )
 
         tam_dir = TAM_DIR
@@ -2510,12 +2511,14 @@ if tab_load is not None:
                     tam_data[_bk] = {k: v for k, v in tam_data[_bk].items()
                                      if not is_unpublished(k)}
 
-            # — Load forecasting results (ERA5 → RTE): RMSE of the fixed TAM
-            # trained on ERA5 weather and scored against observed RTE net demand.
+            # — Load forecasting results (ERA5 → observed): RMSE of the fixed TAM
+            # trained on ERA5 weather and scored against observed net demand.
+            # The observed record starts in July 2018 for the central US.
+            _obs0 = "2018-07" if _selected == "us_central" else "2012"
             rmse_keys = {}
             for _sfx, _tag in [
-                ("_train", "Train (2012–2021)"),
-                ("_2012_2022", "All (2012–2022)"),
+                ("_train", f"Train ({_obs0}–2021)"),
+                ("_2012_2022", f"All ({_obs0}–2022)"),
                 ("_2022", "Hold-out 2022"),
             ]:
                 for _data_k, _data_v in tam_data.items():
@@ -2634,7 +2637,7 @@ if tab_load is not None:
     
                 st.dataframe(
                     df_tam.style.apply(_highlight_best_tam, axis=0).format("{:.4f}"),
-            width="stretch",
+                    width="stretch",
                 )
     
                 # Interactive Plotly Line / Comparison Plots (same setup as line plot panel)
@@ -2736,16 +2739,9 @@ if tab_load is not None:
                     )
                 elif tam_plot_type == "Errors by Season (DJF, MAM, JJA, SON)":
                     seasons = ["DJF", "MAM", "JJA", "SON"]
-                    fallback_season = {
-                        "ERA5": [0.0, 0.0, 0.0, 0.0],
-                        "BCSD": [0.015, 0.018, 0.025, 0.016],
-                        "CDF-t": [0.045, 0.052, 0.090, 0.048],
-                        "iDownscale": [0.012, 0.014, 0.019, 0.013],
-                        "CM": [0.011, 0.013, 0.018, 0.012],
-                        "DOTC": [0.012, 0.013, 0.018, 0.012],
-                        "Bicubic": [0.042, 0.045, 0.140, 0.040],
-                    }
-                    season_data = fallback_season
+                    # Measured values only: no hard-coded fallback, so a missing
+                    # breakdown shows as missing rather than as invented numbers.
+                    season_data = {}
                     raw_season = tam_data.get("by_season")
                     if isinstance(raw_season, dict) and raw_season:
                         season_data = {
@@ -2753,6 +2749,8 @@ if tab_load is not None:
                             for k, v in raw_season.items()
                             if isinstance(v, (list, tuple)) and len(v) == len(seasons)
                         }
+                    if not season_data:
+                        st.info("No seasonal breakdown in this TAM metrics file.")
                     for m_name, vals in season_data.items():
                         fig_tam_plots.add_trace(go.Bar(name=m_name, x=seasons, y=vals))
                     fig_tam_plots.update_layout(
@@ -2765,16 +2763,7 @@ if tab_load is not None:
                     )
                 elif tam_plot_type == "Errors by Wind Level (Low, Mid, High)":
                     wind_levels = ["Low wind", "Mid wind", "High wind"]
-                    fallback_wind = {
-                        "ERA5": [0.0, 0.0, 0.0],
-                        "BCSD": [0.018, 0.020, 0.025],
-                        "CDF-t": [0.055, 0.058, 0.065],
-                        "iDownscale": [0.012, 0.014, 0.015],
-                        "CM": [0.011, 0.013, 0.014],
-                        "DOTC": [0.011, 0.013, 0.014],
-                        "Bicubic": [0.048, 0.050, 0.052],
-                    }
-                    wind_data = fallback_wind
+                    wind_data = {}
                     raw_wind = tam_data.get("by_wind")
                     if isinstance(raw_wind, dict) and raw_wind:
                         wind_data = {
@@ -2782,6 +2771,8 @@ if tab_load is not None:
                             for k, v in raw_wind.items()
                             if isinstance(v, (list, tuple)) and len(v) == len(wind_levels)
                         }
+                    if not wind_data:
+                        st.info("No wind-level breakdown in this TAM metrics file.")
                     for m_name, vals in wind_data.items():
                         fig_tam_plots.add_trace(go.Bar(name=m_name, x=wind_levels, y=vals))
                     fig_tam_plots.update_layout(
@@ -2824,40 +2815,17 @@ if tab_load is not None:
                             st.warning("CDF data file exists but could not be read.")
                             fig_tam_plots = go.Figure()
                     else:
-                        st.caption(
-                            "Empirical CDF data not found; showing synthetic normal CDF "
-                            "reconstructed from KS/Wasserstein metrics (tails approximate). "
-                            "Re-run the TAM analysis to export real CDF curves."
-                        )
-                        from scipy.special import erf
-                        x_grid = np.linspace(20000, 90000, 200)
-                        era5_cdf = 0.5 * (1 + erf((x_grid - 52000) / (12000 * np.sqrt(2))))
-                        fig_tam_plots.add_trace(go.Scatter(
-                            x=x_grid, y=era5_cdf, name="ERA5 Reference",
-                            line=dict(color="black", width=3)
-                        ))
-                        for r in rows:
-                            m_name = r["Method"]
-                            wass = r["Wasserstein (MW)"]
-                            shift = wass * 0.2 if m_name != "Bicubic" else 3500
-                            scale = 1.0 + (r["KS stat"] * 5)
-                            m_cdf = 0.5 * (1 + erf((x_grid - (52000 + shift)) / (12000 * scale * np.sqrt(2))))
-                            fig_tam_plots.add_trace(go.Scatter(
-                                x=x_grid, y=m_cdf, name=m_name,
-                                line=dict(width=2)
-                            ))
-                        fig_tam_plots.update_layout(
-                            title=f"Cumulative Distribution Function (CDF) of Net Demand — {rep_choice}",
-                            xaxis_title="Net Demand (MW)",
-                            yaxis_title="Cumulative Probability",
-                            height=430,
-                            legend=dict(orientation="h", yanchor="bottom", y=-0.3),
-                        )
-                        st.plotly_chart(fig_tam_plots, width="stretch", key="tam_cdf_plotly")
-                        # Render plots for all other types (Error Metrics, Quantile Distortion,
-                        # Radar, Seasonal/Wind errors). The CDF case already plotted above.
-                        if tam_plot_type != "Net-Demand CDF":
-                            st.plotly_chart(fig_tam_plots, width="stretch", key="tam_plotly")
+                        # Never draw a synthetic CDF: curves reconstructed from
+                        # summary scores would look like measured results.
+                        st.info("Empirical net-demand CDF curves are not available "
+                                "for this selection.")
+
+                if fig_tam_plots.data:
+                    st.plotly_chart(
+                        fig_tam_plots,
+                        width="stretch",
+                        key=f"tam_plot_{tam_plot_type}",
+                    )
     
             else:
                 st.info("No method metrics found in JSON.")
