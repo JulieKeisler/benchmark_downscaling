@@ -27,7 +27,17 @@ RESULTS_ROOT = Path(os.environ["RESULTS_ROOT"]) if os.environ.get("RESULTS_ROOT"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Downstream TAM lens data (outside this repo). Overridable for hosted deploys,
 # which bundle a small copy alongside the app.
-TAM_DIR = Path(os.environ.get("TAM_DIR", "/home/jkeisler/Documents/Code/TAM_downscaling"))
+# Resolve TAM directory:
+#   1. Use the `TAM_DIR` environment variable if set.
+#   2. Fallback to a sibling `../tam_data` relative to the repo root.
+#   3. Fallback to the absolute default used previously.
+fallback_tam_dir = Path(__file__).resolve().parent.parent / ".." / "tam_data"
+TAM_DIR = Path(
+    os.environ.get(
+        "TAM_DIR",
+        fallback_tam_dir if fallback_tam_dir.is_dir() else "/home/jkeisler/Documents/Code/TAM_downscaling"
+    )
+)
 
 # Experiment/region labels — each is a top-level subdir of results/
 EXPERIMENT_LABELS = {
@@ -2844,6 +2854,10 @@ if tab_load is not None:
                             legend=dict(orientation="h", yanchor="bottom", y=-0.3),
                         )
                         st.plotly_chart(fig_tam_plots, width="stretch", key="tam_cdf_plotly")
+                        # Render plots for all other types (Error Metrics, Quantile Distortion,
+                        # Radar, Seasonal/Wind errors). The CDF case already plotted above.
+                        if tam_plot_type != "Net-Demand CDF":
+                            st.plotly_chart(fig_tam_plots, width="stretch", key="tam_plotly")
     
             else:
                 st.info("No method metrics found in JSON.")
