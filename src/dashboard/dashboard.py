@@ -120,7 +120,7 @@ _PIPELINE_HTML = """
 # so adding a method there automatically surfaces in the dashboard.
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "src" / "evaluation"))
-from baselines import METHOD_LABELS
+from baselines import METHOD_LABELS, is_unpublished
 # Extended color palette (tab20)
 COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b",
@@ -142,12 +142,13 @@ st.title("Downscaling Benchmark for the Electricity System")
 def _has_methods(d: Path) -> bool:
     """True if `d` has method subdirs directly under it OR a single GCM level."""
     if any((d / m / "metrics.json").exists()
-           for m in d.iterdir() if (d / m).is_dir()):
+           for m in d.iterdir() if (d / m).is_dir() and not is_unpublished(m.name)):
         return True
     # factorial layout: results/{region}/{gcm}/{method}
     return any((d / g / m / "metrics.json").exists()
                for g in d.iterdir() if (d / g).is_dir()
-               for m in (d / g).iterdir() if (d / g / m).is_dir())
+               for m in (d / g).iterdir()
+               if (d / g / m).is_dir() and not is_unpublished(m.name))
 
 def _coupling_dir(region: str, gcm: str) -> Path:
     """Directory holding the method subdirs for a (region, gcm) coupling.
@@ -169,13 +170,14 @@ def _available_gcms(region: str) -> list[str]:
         return gcms
     native = NATIVE_GCM.get(region)
     if native and any((d / m / "metrics.json").exists()
-                      for m in d.iterdir() if (d / m).is_dir()):
+                      for m in d.iterdir()
+                      if (d / m).is_dir() and not is_unpublished(m.name)):
         gcms.append(native)
     for g in sorted(x for x in d.iterdir() if x.is_dir()):
         if g.name == native:
             continue
         if any((g / m / "metrics.json").exists()
-               for m in g.iterdir() if (g / m).is_dir()):
+               for m in g.iterdir() if (g / m).is_dir() and not is_unpublished(m.name)):
             gcms.append(g.name)
     return gcms
 
@@ -222,10 +224,9 @@ _selected_gcm = st.selectbox(
 RESULTS_DIR = _coupling_dir(_selected, _selected_gcm)
 
 # ── Discover methods ──────────────────────────────────────────────────────────
-EXCLUDED_METHODS = {"automated_degradation"}
 all_method_dirs = sorted(
     d.name for d in RESULTS_DIR.iterdir()
-    if d.is_dir() and (d / "metrics.json").exists() and d.name not in EXCLUDED_METHODS
+    if d.is_dir() and (d / "metrics.json").exists() and not is_unpublished(d.name)
 ) if RESULTS_DIR.exists() else []
 
 if not all_method_dirs:
@@ -1558,17 +1559,40 @@ with tab_table:
     else:
         st.info("No data for the selected filters.")
 
-    # Delta heatmap visual
+    # Delta heatmap visual — drawn from the methods shown above rather than a
+    # pre-rendered figure, so it always matches the published method set.
     st.markdown("---")
-    comp_delta = RESULTS_DIR / "comparison" / "delta_heatmap.png"
-    if comp_delta.exists():
+    _dh_periods = list(DELTA_PERIOD_MAP.items())
+    _dh_methods = [m for m in sel_methods if raw_metrics[m].get("_delta")]
+    _dh_vars = [v for v in sel_vars
+                if any(v in raw_metrics[m]["_delta"] for m in _dh_methods)]
+    if _dh_methods and _dh_vars:
+        from plotly.subplots import make_subplots
         st.subheader("Delta change scores — heatmap")
         st.caption(
             "Mean absolute error between method's and GCM's relative climate change signal "
             "(% change future vs historical). Lower = better. "
             "Only methods with predictions through 2100 produce these scores (see Δ signal rows above)."
         )
-        st.image(str(comp_delta), use_container_width=True)
+        _fig_dh = make_subplots(rows=1, cols=len(_dh_periods),
+                                subplot_titles=[lbl for lbl, _ in _dh_periods],
+                                horizontal_spacing=0.18)
+        for _c, (_, _p) in enumerate(_dh_periods, start=1):
+            _z = np.array([[raw_metrics[m]["_delta"].get(v, {}).get(_p, np.nan)
+                            for v in _dh_vars] for m in _dh_methods], dtype=float)
+            _fig_dh.add_trace(go.Heatmap(
+                z=_z, x=_dh_vars, y=[mlabel(m) for m in _dh_methods],
+                colorscale="YlOrRd", zmin=0,
+                zmax=float(np.nanmax(_z)) if np.isfinite(_z).any() else 1.0,
+                text=[[f"{x:.2f}" if np.isfinite(x) else "" for x in row] for row in _z],
+                texttemplate="%{text}",
+                colorbar=dict(x=0.41 if _c == 1 else 1.0, len=0.9, thickness=12),
+                hovertemplate="%{y} · %{x}: %{z:.3f}<extra></extra>",
+            ), row=1, col=_c)
+        _fig_dh.update_yaxes(autorange="reversed")
+        _fig_dh.update_layout(height=max(300, 45 * len(_dh_methods) + 120),
+                              margin=dict(t=60, b=40))
+        st.plotly_chart(_fig_dh, use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 2 — Radar
@@ -2462,6 +2486,12 @@ if tab_load is not None:
         if jpath.exists():
             with open(jpath) as f:
                 tam_data = json.load(f)
+            # The lens scores every local result dir; keep unpublished methods out.
+            tam_data = {k: v for k, v in tam_data.items() if not is_unpublished(k)}
+            for _bk in ("by_season", "by_wind"):
+                if isinstance(tam_data.get(_bk), dict):
+                    tam_data[_bk] = {k: v for k, v in tam_data[_bk].items()
+                                     if not is_unpublished(k)}
 
             # — Load forecasting results (ERA5 → RTE): RMSE of the fixed TAM
             # trained on ERA5 weather and scored against observed RTE net demand.
@@ -2500,9 +2530,10 @@ if tab_load is not None:
                 fc_path = tam_dir / f"tam_forecasts_results{region_sfx}.npz"
             if fc_path.exists():
                 _fc = np.load(fc_path, allow_pickle=True)
-                _fc_names = [str(n) for n in _fc["names"]]
+                _fc_keep = [i for i, n in enumerate(_fc["names"]) if not is_unpublished(n)]
+                _fc_names = [str(_fc["names"][i]) for i in _fc_keep]
                 _fc_dates = pd.to_datetime(_fc["dates"])
-                _fc_pred = np.asarray(_fc["pred"], dtype=float)
+                _fc_pred = np.asarray(_fc["pred"], dtype=float)[:, _fc_keep]
                 _fc_sel = st.multiselect(
                     "Weather sources (TAM forecast series)", _fc_names,
                     default=_fc_names, key=f"tam_fc_src_{rep_choice}",
@@ -2749,9 +2780,11 @@ if tab_load is not None:
                     if cdf_path.exists():
                         try:
                             cdf_npz = np.load(cdf_path, allow_pickle=True)
-                            cdf_names = list(cdf_npz["names"])
+                            _cdf_keep = [i for i, n in enumerate(cdf_npz["names"])
+                                         if not is_unpublished(n)]
+                            cdf_names = [cdf_npz["names"][i] for i in _cdf_keep]
                             qgrid = cdf_npz["qgrid"]
-                            curves = cdf_npz["curves"]
+                            curves = cdf_npz["curves"][_cdf_keep]
                             if tam_cdf_view == "Lower tail (q≤20%)":
                                 mask = qgrid <= 0.20
                             elif tam_cdf_view == "Upper tail (q≥80%)":
@@ -2810,6 +2843,12 @@ if tab_load is not None:
                 st.info("No method metrics found in JSON.")
         else:
             if DEV_NOTES:
-                st.warning(f"TAM metrics file not found at {jpath}")
+                st.warning(
+                    f"TAM metrics file not found at {jpath}\n\n"
+                    f"Resolved TAM_DIR: `{tam_dir}` (from env var "
+                    f"`{'set' if os.environ.get('TAM_DIR') else 'unset — using default'}`).\n"
+                    f"Directory exists: {tam_dir.exists()}; files present (up to 10): "
+                    f"{[p.name for p in tam_dir.glob('*')][:10] if tam_dir.exists() else '—'}"
+                )
             else:
                 st.info("No TAM metrics available for this selection.")
