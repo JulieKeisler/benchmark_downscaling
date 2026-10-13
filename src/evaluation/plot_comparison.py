@@ -27,6 +27,7 @@ import numpy as np
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent))
 
+from baselines.labels import is_unpublished
 from plots import plot_spatial_comparison
 from plots.utils import _add_geo, _try_cartopy
 from plots.spatial_plots import _sm
@@ -425,13 +426,12 @@ def main(argv=None):
     out_dir = Path(args.out_dir) if args.out_dir else results_dir / "comparison"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    EXCLUDED_METHODS = {"automated_degradation"}
     if args.methods:
-        method_dirs = {m: results_dir / m for m in args.methods}
+        method_dirs = {m: results_dir / m for m in args.methods if not is_unpublished(m)}
     else:
         method_dirs = {
             d.name: d for d in sorted(results_dir.iterdir())
-            if d.is_dir() and d.name != "comparison" and d.name not in EXCLUDED_METHODS
+            if d.is_dir() and d.name != "comparison" and not is_unpublished(d.name)
         }
 
     if not method_dirs:

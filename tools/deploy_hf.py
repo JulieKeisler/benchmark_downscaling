@@ -2,8 +2,8 @@
 """Package and (optionally) upload the benchmark dashboard to Hugging Face.
 
 Builds a size-minimised copy of the *app-visible* results (the three benchmark
-regions, the published baselines, and the region-level comparison figures — no
-``predictions.pt``, no ChimeraFlow / ablation / stray ``*_eval`` dirs), tars it,
+regions and the published baselines — no ``predictions.pt``, no unpublished /
+ablation / stray ``*_eval`` dirs, no pre-rendered comparison figures), tars it,
 and uploads:
 
   * the data archive  -> a Hugging Face **dataset** repo (``results.tar.gz`` +
@@ -23,16 +23,21 @@ can inspect sizes / contents first.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import sys
 import tarfile
 from pathlib import Path
 
+import numpy as np
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "src"))
+from baselines.labels import is_unpublished  # noqa: E402  (dependency-free)
 
 REGIONS = ["france", "australia", "us_central"]
-# Published baselines only (excludes ChimeraFlow / automated_degradation / *_eval).
+# Published baselines only (no unpublished methods, ablations or *_eval dirs).
 METHODS = {
     "bicubic", "bcsd", "cdft", "dotc",
     "idownscale", "corrdiff_qm", "cm", "serpentflowclim",
@@ -44,6 +49,8 @@ TAM_PATTERNS = [
     "metrics_results*.json", "metrics_regional*.json",
     "cdf_results*.npz", "cdf_regional*.npz", "tam_forecasts*.npz",
 ]
+# Arrays in the TAM .npz files indexed by `names`, and the axis that is.
+TAM_NPZ_NAME_AXIS = {"curves": 0, "pred": 1}
 
 DEFAULT_DATASET_REPO = "Jkeisler75/benchmark-downscaling-results"
 DEFAULT_SPACE_REPO = "Jkeisler75/downscaling-benchmark"
@@ -95,21 +102,52 @@ def stage_results(results_root: Path, out: Path, regions: list[str]) -> None:
             for m in sorted(METHODS):
                 if (base / g / m).is_dir():
                     total += _copy_filtered(base / g / m, out / r / g / m)
-        # region-level comparison figures (delta_heatmap.png, …)
-        if (base / "comparison").is_dir():
-            total += _copy_filtered(base / "comparison", out / r / "comparison")
+        # results/{region}/comparison/ is not staged: its pre-rendered figures
+        # can't be filtered by method, and the dashboard draws its own heatmap.
     print(f"  staged {total} files")
 
 
+def _stage_tam_json(src: Path, dst: Path) -> int:
+    """Copy a TAM metrics JSON without unpublished methods. Returns rows dropped."""
+    d = json.loads(src.read_text())
+    dropped = [k for k in d if is_unpublished(k)]
+    d = {k: v for k, v in d.items() if not is_unpublished(k)}
+    for bk in ("by_season", "by_wind"):
+        if isinstance(d.get(bk), dict):
+            d[bk] = {k: v for k, v in d[bk].items() if not is_unpublished(k)}
+    dst.write_text(json.dumps(d, indent=2))
+    return len(dropped)
+
+
+def _stage_tam_npz(src: Path, dst: Path) -> int:
+    """Copy a TAM .npz without unpublished methods. Returns columns dropped."""
+    with np.load(src, allow_pickle=True) as z:
+        arrays = {k: z[k] for k in z.files}
+    names = arrays["names"]
+    keep = [i for i, n in enumerate(names) if not is_unpublished(n)]
+    arrays["names"] = names[keep]
+    for k, axis in TAM_NPZ_NAME_AXIS.items():
+        if k in arrays:
+            arrays[k] = np.take(arrays[k], keep, axis=axis)
+    np.savez_compressed(dst, **arrays)
+    return len(names) - len(keep)
+
+
 def stage_tam(tam_dir: Path, out: Path) -> None:
-    out.mkdir(parents=True, exist_ok=True)
-    n = 0
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    n = dropped = 0
     for pat in TAM_PATTERNS:
         for p in sorted(tam_dir.glob(pat)):
-            if p.is_file():
-                shutil.copy2(p, out / p.name)
-                n += 1
-    print(f"  staged {n} TAM files")
+            if not p.is_file():
+                continue
+            if p.suffix == ".json":
+                dropped += _stage_tam_json(p, out / p.name)
+            else:
+                dropped += _stage_tam_npz(p, out / p.name)
+            n += 1
+    print(f"  staged {n} TAM files ({dropped} unpublished-method entries dropped)")
 
 
 def make_archive(results_dir: Path, archive: Path) -> None:
@@ -186,27 +224,29 @@ def main() -> int:
     ap.add_argument("--token", default=os.environ.get("HF_TOKEN"),
                     help="HF token; defaults to $HF_TOKEN, then the `hf auth login` cache")
     ap.add_argument("--reuse-build", action="store_true",
-                    help="Skip re-staging if .deploy_build/results.tar.gz already exists")
+                    help="Skip re-staging results if .deploy_build/results.tar.gz "
+                         "already exists (TAM data is always re-staged)")
     args = ap.parse_args()
 
     build = args.build_dir
+    if not args.tam_dir.is_dir():
+        print(f"  ERROR: TAM dir not found: {args.tam_dir}", file=sys.stderr)
+        return 1
 
     if args.reuse_build and (build / "results.tar.gz").exists():
-        print(f"Reusing existing build in {build}")
+        print(f"Reusing existing results build in {build}")
     else:
         if build.exists():
             shutil.rmtree(build)
         build.mkdir(parents=True)
         print("Staging results data …")
         stage_results(args.results_root, build / "results", args.regions)
-        print("Staging TAM data …")
-        if not args.tam_dir.is_dir():
-            print(f"  ERROR: TAM dir not found: {args.tam_dir}", file=sys.stderr)
-            return 1
-        stage_tam(args.tam_dir, build / "tam")
         print("Creating results.tar.gz …")
         make_archive(build / "results", build / "results.tar.gz")
-        make_archive(build / "tam", build / "tam.tar.gz")
+    # Small, and the unpublished-method filter must apply to every upload.
+    print("Staging TAM data …")
+    stage_tam(args.tam_dir, build / "tam")
+    make_archive(build / "tam", build / "tam.tar.gz")
 
     space_dir = stage_space(build)
 
