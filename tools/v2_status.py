@@ -162,9 +162,14 @@ def tex(s: str) -> str:
 
 
 class Status:
-    def __init__(self, jobs, typical, mover_ids, now):
+    def __init__(self, jobs, typical, mover_ids, now, dev_used=None):
         self.jobs, self.typ, self.mover, self.now = jobs, typical, mover_ids, now
         self.by_id = {j["id"]: j for j in jobs.values()}
+        self.dev_used = dev_used
+        # place in the dev mover's line: its order, jobs still pending outside dev
+        self.line_up = [i for i in mover_ids if i in self.by_id
+                        and self.by_id[i]["state"] == "PENDING" and not self.by_id[i].get("dep")
+                        and "dev" not in self.by_id[i]["qos"]]
 
     def expected_end(self, j, depth=0):
         h = timedelta(hours=self.typ.get(kind_of(j), 1.0))
@@ -206,8 +211,10 @@ class Status:
                     what += f" of {REGIONS[dep['key'][1]]}$\\times${GCMS[dep['key'][2]].split('-')[0]}"
                 s = self.expected_start(j)
                 return "pending", f"pending, after {what}" + (f" ($\\sim${fmt(s, self.now)})" if s else "") + f"; {where(j)}"
-            if j["id"] in self.mover and "dev" not in j["qos"] and j["host"] == "jz":
-                return "pending", "pending, goes to JZ gpu\\_p13 dev as a slot frees (within $\\sim$1 h)"
+            if j["id"] in self.line_up and j["host"] == "jz":
+                used = f"; {self.dev_used} of the 10 V100 dev slots in use" if self.dev_used is not None else ""
+                return "pending", (f"pending, waiting for a JZ V100 dev slot: "
+                                   f"{self.line_up.index(j['id']) + 1} in line{used}")
             s = j.get("est_start")
             return "pending", f"pending, {where(j)}; starts " + (f"$\\sim${fmt(s, self.now)}" if s else "(no Slurm estimate yet)")
         return "failed", f"{st.lower().replace('_', ' ')} (job {j['id']}, {where(j)})"
@@ -303,6 +310,8 @@ Expected end of a running job = start + median duration of finished v2 jobs of t
 (CDF-t {typ['cdft']:.1f} h, dOTC {typ['dotc']:.1f} h, iDownscale {typ['idownscale']:.1f} h, CorrDiff training {typ['corrdiff/train']:.1f} h,
 CorrDiff prediction {typ['corrdiff/predict']:.1f} h, CorrDiff seed {typ['corrdiff/seed']:.1f} h, CM {typ['cm']:.2f} h, SerpentFlow-CLIM {typ['sfc/fresh']:.0f} h on V100).
 Expected start of a pending job = Slurm's estimate, or the expected end of the job it waits for.
+Scored again with the final evaluation code on 14 Oct 17:00--17:35 (JZ batch jobs 1068518, 1068520; the cells keep their run time):
+BCSD for France$\times$IPSL, Australia$\times$CNRM and Central US$\times$CESM2; Bicubic and EQM for Central US$\times$CESM2; the CorrDiff-QM model of the same three pairs.
 Not in the table: t* sweeps for CM, {n_psd}/9 done; CM t* sensitivity, done.
 \end{{minipage}}
 \end{{document}}
@@ -324,10 +333,11 @@ def main():
     for host in ("jz", "cleps"):
         jobs.update({f"{host}:{k}": v for k, v in fetch(host).items()})
     # job ids are cluster-local but JZ (10xxxxx) and cleps (55xxxxx) ranges do not overlap
-    mover = set(re.findall(r"\d{7}", ssh("jz", f"grep -E '^(CM|CD)=' {MOVER} 2>/dev/null || true")))
+    mover = re.findall(r"\d{7}", ssh("jz", f"grep -E '^(CM|CD)=' {MOVER} 2>/dev/null || true"))
+    dev_used = int(ssh("jz", "squeue -h -u $USER -o %q | grep -cx qos_gpu-dev || true").strip() or 0)
     now = datetime.now().replace(microsecond=0)
     typ = typical_hours(jobs)
-    status = Status(jobs, typ, mover, now)
+    status = Status(jobs, typ, mover, now, dev_used)
     cells, n_psd = build(jobs, status)
     render(cells, n_psd, now, Path(args.out), typ)
     print(f"wrote {args.out}")

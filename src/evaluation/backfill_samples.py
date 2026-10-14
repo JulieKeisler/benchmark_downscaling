@@ -8,7 +8,7 @@ regenerates exactly that one artefact per variable, reusing:
   * local `predictions.pt` when present, or an inline registry method
     (bicubic / cdft) otherwise;
   * the source GCM (regridded bicubically onto the ERA5 grid, re-stamped with
-    the ERA5 time axis — AGENTS.md gotcha #1).
+    the ERA5 time axis, since bicubic_regrid keeps the GCM's cftime axis).
 
 Usage:
     python src/evaluation/backfill_samples.py                      # all regions

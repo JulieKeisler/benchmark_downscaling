@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tripwire: a finished method run is complete and finite (contract §E4).
+"""Tripwire: a finished method run is complete and finite.
 
 Checks `<method_dir>/metrics.json`: every expected variable has finite values
 for every vs_obs and vs_gcm metric and both change periods; and the

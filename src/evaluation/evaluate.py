@@ -290,7 +290,7 @@ def compute_all_metrics(
     """
     daily = n_timesteps >= 200
     for name, da in (("obs", obs), ("pred_obs", pred_obs), ("gcm", gcm_on_era5), ("pred_gcm", pred_gcm)):
-        if da.dtype != np.float64:   # contract §E: reductions only in float64
+        if da.dtype != np.float64:   # reductions only in float64
             raise TypeError(f"compute_all_metrics: {name} is {da.dtype}, not float64")
 
     vs_obs: dict = {
@@ -307,7 +307,7 @@ def compute_all_metrics(
     # Spatial spectrum metric (ERA5 period)
     spec_score, spec_data = spatial_spectrum_metric(obs, pred_obs)
     vs_obs["spectral_mae"] = spec_score
-    # Fine scales (< 200 km), where downscaling adds information (contract §D)
+    # Fine scales (< 200 km), where downscaling adds information
     fine_score, fine_bias, fine_data = fine_spectrum_metric(obs, pred_obs, variable=variable)
     vs_obs["spectral_fine"] = fine_score
     vs_obs["spectral_fine_bias"] = fine_bias

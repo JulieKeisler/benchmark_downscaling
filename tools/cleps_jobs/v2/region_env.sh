@@ -1,5 +1,5 @@
 #!/bin/bash
-# v2 reruns on cleps (contract "Proposed amendments" 2026-10-13). Code from ~/benchmark_downscaling_v2;
+# v2 reruns on cleps. Code from ~/benchmark_downscaling_v2;
 # data read-only from the shared dirs; outputs to /scratch/.../results_v2 only ($HOME quota is 100 G).
 set -euo pipefail
 REGION="$1"
@@ -27,7 +27,7 @@ case "$REGION/$GCM" in
 esac
 if [ "$GCM" = cesm2 ]; then SCENARIO=ssp245; VARS="tas pr psl sfcWind rsds"
 else SCENARIO=ssp370; VARS="tas pr psl sfcWind sfcWindmax rsds"; fi
-# Derived products without a variant_label (contract §A): CNRM sfcWind over Australia.
+# Derived products without a variant_label: CNRM sfcWind over Australia.
 ALLOW_UNLABELLED=""; [ "$REGION/$GCM" = australia/cnrm_cm6_1 ] && ALLOW_UNLABELLED="sfcWind"
 # CDS downloads without metadata (Julie, 2026-10-14): 9/12 bit-identical to the expected
 # member on Pangeo; ssp370 rsds unverified (ESGF down). Re-check when ESGF answers.

@@ -7,7 +7,7 @@
 #SBATCH --time=24:00:00
 #SBATCH --output=/scratch/jkeisler/benchmark_downscaling/logs_v2/%x_%j.out
 #SBATCH --error=/scratch/jkeisler/benchmark_downscaling/logs_v2/%x_%j.err
-# SBCK.dOTC jointly over variables (contract §C). ~60 CPU-h per region (0.45 s per fit).
+# SBCK.dOTC jointly over variables. ~60 CPU-h per region (0.45 s per fit).
 # Submit: sbatch --job-name=v2_dotc_$REGION --export=ALL,REGION=<region> dotc.sh
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate sbck-gpu

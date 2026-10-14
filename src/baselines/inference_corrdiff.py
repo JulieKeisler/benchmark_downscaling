@@ -78,7 +78,7 @@ def _schedule(n_t: int = N_DIFF_T, s: float = COSINE_S) -> torch.Tensor:
 def _to_datetime64(values) -> np.ndarray:
     """Convert a cftime or np.datetime64 array to plain np.datetime64[ns].
 
-    bicubic_regrid preserves the GCM cftime axis (AGENTS.md gotcha #1), which
+    bicubic_regrid preserves the GCM cftime axis, which
     breaks align_time and save_predictions; re-stamp before building refs.
     """
     vals = np.asarray(values)

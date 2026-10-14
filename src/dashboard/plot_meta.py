@@ -5,14 +5,14 @@ This module is the single source of truth for:
   * the plain-language caption and axis/colorbar label of every plot the
     dashboard draws (Line plots, Spatial maps tabs).
 
-Rationale (legoESM "scientific contract" + Ralph backpressure): the dashboard
+Rationale: the dashboard
 script (``dashboard.py``) runs top-to-bottom under Streamlit and cannot be
 imported by a unit test. Keeping the pure, dependency-free metadata here makes
 it directly testable — so a wrong or missing unit fails CI instead of silently
 shipping. ``dashboard.py`` adds its own directory to ``sys.path`` and imports
 these helpers.
 
-Contract (enforced by ``tests/test_plot_meta.py`` and ``CONTRACT.md``):
+Rules (enforced by ``tests/test_plot_meta.py``):
   * every variable used by the benchmark has exactly one unit;
   * every plot type has a non-empty caption that names its unit;
   * colorbar labels for change maps are prefixed with "Δ".
@@ -21,9 +21,9 @@ Keep this file free of numpy/plotly/streamlit imports.
 """
 from __future__ import annotations
 
-# Physical units per CMIP6 short name. Must match CONTRACT.md §Units and the
-# loader conventions in src/configs/benchmark.yaml (units are handled at load
-# time, never inside method functions — see AGENTS.md).
+# Physical units per CMIP6 short name. Must match the loader conventions in
+# src/configs/benchmark.yaml (units are handled at load time, never inside
+# method functions).
 VAR_UNITS: dict[str, str] = {
     "tas":        "K",
     "pr":         "mm/day",

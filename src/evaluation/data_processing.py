@@ -56,7 +56,7 @@ def _rename_coords(ds: xr.Dataset) -> xr.Dataset:
 
 def _lon_to_180(ds: xr.Dataset) -> xr.Dataset:
     # ERA5 crops use -180..180; a 0..360 GCM crop would otherwise be placed by
-    # index and collapse onto one column in bicubic_regrid (contract §E1).
+    # index and collapse onto one column in bicubic_regrid.
     if "lon" in ds.coords and float(ds.lon.max()) > 180.0:
         ds = ds.assign_coords(lon=((ds.lon + 180.0) % 360.0) - 180.0).sortby("lon")
     return ds
@@ -65,7 +65,7 @@ def _lon_to_180(ds: xr.Dataset) -> xr.Dataset:
 def check_same_member(files: list[Path]) -> str | None:
     """Raise if the files of one GCM variable come from different realisations.
 
-    Contract §E2: an r1 historical spliced to an r4 scenario changes every
+    An r1 historical spliced to an r4 scenario changes every
     2000-2020 and future-change number. Files without a variant_label (derived
     products) are skipped. Returns the common label.
     """
@@ -197,7 +197,7 @@ def bicubic_regrid(
         dv = np.diff(src)
         if np.abs(dv / dv.mean() - 1.0).max() > 0.01:
             raise ValueError(f"bicubic_regrid: source {name} spacing is not uniform")
-    # Contract §E1: the source grid must cover the target (to one source cell);
+    # The source grid must cover the target (to one source cell);
     # mismatched lon conventions otherwise give a silent one-column field.
     for name, src, tgt, d in (("lat", src_lat, target_lat, dlat),
                               ("lon", src_lon, target_lon, dlon)):

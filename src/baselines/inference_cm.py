@@ -97,7 +97,7 @@ def run(
     target_lat = ref_v.lat.values
     target_lon = ref_v.lon.values
 
-    # QDM in 20-y moving windows (Cannon et al. 2015; contract §C): the GCM is
+    # QDM in 20-y moving windows (Cannon et al. 2015): the GCM is
     # read from eval_start - 5 so the first window (e.g. 1995-2014) is full.
     windows = _sliding_windows(eval_start, eval_end, 20, 10, 5)
     load_start = min(w[0] for w in windows)

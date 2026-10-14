@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tripwire: check a GCM input dir before any run (contract §E1–§E3).
+"""Tripwire: check a GCM input dir before any run.
 
 For every variable: one realisation across the historical and scenario files,
 a longitude range that covers the ERA5 domain once normalised to -180..180,

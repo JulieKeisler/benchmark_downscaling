@@ -58,7 +58,7 @@ sys.path.insert(0, str(_HERE.parent / "evaluation"))
 from inference_cdft import _sliding_windows  # noqa: E402
 
 CLIP_MIN: dict[str, float] = {"pr": 0.0, "sfcWind": 0.0, "sfcWindmax": 0.0, "rsds": 0.0}
-PR_DRY = 0.1      # mm/day: SSR threshold for precipitation (contract §C)
+PR_DRY = 0.1      # mm/day: SSR threshold for precipitation
 BIN_WIDTH = 0.01  # dOTC histogram bin width in ERA5 standard deviations
 
 # Filled before the pool forks; workers read them copy-on-write.

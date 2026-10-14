@@ -4,8 +4,8 @@ WHY THIS TEST EXISTS
 --------------------
 The dashboard (src/dashboard/dashboard.py) runs top-to-bottom under Streamlit
 and cannot be imported by a test, so the unit/caption metadata was extracted
-into the pure, dependency-free sibling module ``plot_meta``. This test is the
-backpressure that keeps that contract honest:
+into the pure, dependency-free sibling module ``plot_meta``. This test keeps
+those rules honest:
 
   * A wrong or missing unit would otherwise ship silently — the dashboard would
     render "tas" with no "(K)", and a reader could mis-scale the plot axis.
@@ -17,7 +17,7 @@ backpressure that keeps that contract honest:
     ``line_help``/``map_help`` raise KeyError and this test fails; the test is
     non-vacuous because it iterates the full type lists and every variable.
   * The variable list and units are the single source of truth for the whole
-    benchmark (see CONTRACT.md §Units); duplicating them elsewhere is a defect.
+    benchmark; duplicating them elsewhere is a defect.
 
 These tests are intentionally offline and fast (no numpy/streamlit/plotly).
 """
@@ -34,9 +34,9 @@ import plot_meta  # noqa: E402
 
 
 # Independent oracle for the six variables the benchmark ships and their units
-# (src/configs/benchmark.yaml, CONTRACT.md §Units). Deliberately NOT imported
-# from plot_meta: the whole point is to catch drift between the module and the
-# contract, so this copy must be maintained by hand.
+# (src/configs/benchmark.yaml). Deliberately NOT imported from plot_meta: the
+# whole point is to catch drift between the module and the configuration, so
+# this copy must be maintained by hand.
 EXPECTED_UNITS = {
     "tas": "K",
     "pr": "mm/day",

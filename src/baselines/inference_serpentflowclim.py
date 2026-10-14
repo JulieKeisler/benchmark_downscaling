@@ -31,7 +31,7 @@ Pipeline (all stages identical to the reference implementation):
           clip non-negative pr/sfcWind/sfcWindmax/rsds, save_predictions.
 
 Physical units throughout: tas K, pr mm/day, sfcWind*/sfcWind m/s, psl Pa,
-rsds W m-2 (loaders already convert raw-to-physical; see AGENTS.md).
+rsds W m-2 (the loaders already convert raw to physical units).
 """
 from __future__ import annotations
 

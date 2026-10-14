@@ -31,8 +31,8 @@ def _build_registry() -> dict:
     def _corrdiff_qm_stub(gcm, obs, variable):
         """Registry safety-net: CorrDiff-QM is a pre-computed (checkpoint) method.
 
-        Eager import of inference_corrdiff would pull in torch/diffusers —
-        see AGENTS.md gotcha #5.
+        Eager import of inference_corrdiff would pull in torch/diffusers,
+        which lightweight consumers (the dashboard, inline methods) lack.
         """
         raise RuntimeError(
             "CorrDiff-QM is a checkpoint-based, pre-computed method. "

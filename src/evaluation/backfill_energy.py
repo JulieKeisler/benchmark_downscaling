@@ -16,7 +16,7 @@ artefacts, reusing:
   * local `predictions.pt` when present, or an inline registry method
     (bicubic / cdft) otherwise;
   * the source GCM (bicubically regridded onto the ERA5 grid and re-stamped
-    with the ERA5 time axis — AGENTS.md gotcha #1).
+    with the ERA5 time axis, since bicubic_regrid keeps the GCM's cftime axis).
 
 Usage:
     python src/evaluation/backfill_energy.py                        # all regions

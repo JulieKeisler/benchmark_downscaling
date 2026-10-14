@@ -1,4 +1,4 @@
-"""Self-tests for the contract tripwires (CONTRACT.md §E): each must be able to fire."""
+"""Self-tests for the input and result tripwires: each must be able to fire."""
 from __future__ import annotations
 
 import json

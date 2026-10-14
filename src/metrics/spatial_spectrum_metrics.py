@@ -139,7 +139,7 @@ def fine_spectrum_metric(obs: xr.DataArray, pred: xr.DataArray,
     dx = abs(float(np.mean(np.diff(lon)))) * 111.0 * float(np.cos(np.deg2rad(lat.mean())))
     o, p = obs.values, pred.values
     if np.isnan(o).any() or np.isnan(p).any():
-        raise ValueError("fine_spectrum_metric: NaN in the fields (contract §E4)")
+        raise ValueError("fine_spectrum_metric: NaN in the fields")
     if variable == "pr":
         o, p = np.log1p(np.clip(o, 0.0, None)), np.log1p(np.clip(p, 0.0, None))
     p_obs = _tapered_power(o)
