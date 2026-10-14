@@ -156,14 +156,14 @@ st.set_page_config(page_title="Downscaling Benchmark for the Electricity System"
 st.title("Downscaling Benchmark for the Electricity System")
 # Compact sidebar: less space above the first widget and between elements.
 st.html("""<style>
-[data-testid="stSidebarHeader"] {height: 2rem; min-height: 0; padding: 0.4rem 1rem 0 1rem;}
+[data-testid="stSidebarHeader"] {height: 2.5rem; min-height: 0; padding: 0.5rem 1rem 0 1rem;}
 [data-testid="stMainBlockContainer"] {padding-top: 2.5rem;}
-[data-testid="stSidebarUserContent"] {padding-top: 0 !important; padding-bottom: 0.5rem;}
-[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {gap: 0.5rem;}
-[data-testid="stSidebar"] hr {margin: 0.25rem 0 !important;}
-[data-testid="stSidebar"] h2 {padding: 0 0 0.1rem 0; font-size: 1.25rem;}
-[data-testid="stSidebar"] [data-baseweb="tag"] {height: 1.4rem; margin: 1px 3px 1px 0;}
-[data-testid="stSidebar"] [data-baseweb="tag"] span {font-size: 0.78rem;}
+[data-testid="stSidebarUserContent"] {padding-top: 0.5rem !important; padding-bottom: 1rem;}
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {gap: 0.85rem;}
+[data-testid="stSidebar"] hr {margin: 0.6rem 0 !important;}
+[data-testid="stSidebar"] h2 {padding: 0 0 0.3rem 0; font-size: 1.35rem;}
+[data-testid="stSidebar"] [data-baseweb="tag"] {height: 1.55rem; margin: 2px 4px 2px 0;}
+[data-testid="stSidebar"] [data-baseweb="tag"] span {font-size: 0.82rem;}
 </style>""")
 
 # ── Experiment / region + GCM selection ────────────────────────────────────────
