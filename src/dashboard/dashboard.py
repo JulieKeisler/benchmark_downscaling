@@ -1102,15 +1102,19 @@ def _tab_title(name: str) -> str | None:
 
 
 def _goto(tab: str, page: str, section: str, detail: bool = False) -> None:
-    """Search-result click: open the tab (and Welcome page), scroll to the section."""
+    """Search-result click: open the tab (and Welcome page), scroll to the section.
+
+    The Search tab stays open, so the results remain one click (or the
+    browser's Back button) away.
+    """
     st.session_state["nav_tab"] = _tab_title(tab)
+    st.session_state["nav_now"] = True
     st.session_state["nav_count"] = st.session_state.get("nav_count", 0) + 1
     if tab == "Welcome" and page:
         st.session_state["welcome_mode"] = page
         if detail and page in ("Methods", "Metrics"):   # text only in the detailed view
             st.session_state[f"welcome_{page.lower()}_detailed"] = True
     st.session_state["nav_scroll"] = section or page
-    _close_search()
 
 
 def _close_search() -> None:
@@ -1119,9 +1123,72 @@ def _close_search() -> None:
     st.session_state["clear_url_hash"] = True
 
 
+# The page's JavaScript works on the hosting window too (Streamlit Community
+# Cloud runs the app in a same-origin frame, and the address bar is the host's).
+_JS_CLEAR_HASH = """<script>(() => {
+  const P = window.parent || window;
+  const clr = () => { for (const w of [window, P]) { try {
+    if (w.location.hash) w.history.replaceState(w.history.state, '', w.location.pathname + w.location.search);
+  } catch (e) {} } };
+  clr();
+  // The run's own URL update comes at its end: keep clearing for a while.
+  try { clearInterval(P.__dsClear); } catch (e) {}
+  P.__dsClear = setInterval(clr, 400);
+  setTimeout(() => clearInterval(P.__dsClear), 20000);
+})();</script>"""
+
+# Back button: returning to the ?search= entry (no #anchor) re-opens the Search tab.
+_JS_BACK_TO_SEARCH = """<script>(() => {
+  const P = window.parent || window;
+  P.__dsDoc = document;
+  if (P.__dsBack) return;
+  P.__dsBack = true;
+  P.addEventListener('popstate', () => {
+    if (P.location.hash || !P.location.search.includes('search=')) return;
+    const tab = [...P.__dsDoc.querySelectorAll('[role="tab"]')]
+      .find(t => t.innerText.trim().startsWith('🔎'));
+    if (tab) { tab.click(); tab.scrollIntoView({block: 'start'}); }
+  });
+})();</script>"""
+
+# Result click: scroll to the section, open it if collapsed, and add a history
+# entry for it (#section) so that Back returns to the results.
+_JS_GOTO = """<script>(() => {
+  const target = %s;
+  const P = window.parent || window;
+  try { clearInterval(P.__dsClear); } catch (e) {}
+  const norm = s => s.normalize('NFKD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase()
+    .replace(/\\s+/g, ' ').trim();
+  const want = norm(target).slice(0, 40);
+  let n = 0;
+  const t = setInterval(() => {
+    n++;
+    let hit = null;
+    for (const p of document.querySelectorAll('[role="tabpanel"]')) {
+      if (p.hidden || p.offsetParent === null) continue;
+      for (const el of p.querySelectorAll('h1,h2,h3,h4,h5,summary,label,p,[data-testid="stMarkdownContainer"] > div')) {
+        if (norm(el.textContent).startsWith(want)) { hit = el; break; }
+      }
+      if (hit) break;
+    }
+    if (hit) {
+      clearInterval(t);
+      const d = hit.closest('details');
+      if (d && !d.open) d.open = true;
+      hit.scrollIntoView({behavior: 'smooth', block: 'start'});
+      hit.style.outline = '3px solid #f6c344';
+      setTimeout(() => hit.style.outline = '', 2500);
+      const slug = norm(target).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'result';
+      try { P.history.pushState({dsResult: 1}, '', P.location.pathname + P.location.search + '#' + slug); } catch (e) {}
+    }
+    if (n > 40) clearInterval(t);
+  }, 250);
+})();</script>"""
+
+
 # A search adds a "Search" tab, opened on top of the others. The tabs key
-# changes only on a new search or a result click, so the tabs are rebuilt on
-# the chosen tab then; otherwise the user's own tab choice is kept.
+# changes only on a new search, a result click or Close, so the tabs are
+# rebuilt on the chosen tab then; otherwise the user's own tab choice is kept.
 _query = st.session_state.get("search_box", "").strip()
 # The URL carries the current search (?search=...), so a results page can be shared.
 if _query and st.query_params.get("search") != _query:
@@ -1130,9 +1197,16 @@ elif not _query and "search" in st.query_params:
     del st.query_params["search"]
 _search_title = ("🔎 Search: " + re.sub(r"[*_`~\[\]()#]", "", _query)) if _query else None
 _nav_tab = st.session_state.get("nav_tab")
+_nav_now = st.session_state.pop("nav_now", False)
+if _nav_now and _nav_tab in _tab_titles:
+    _default_tab = _nav_tab                      # a result was clicked
+elif _search_title:
+    _default_tab = _search_title                 # a new search
+else:
+    _default_tab = _nav_tab if _nav_tab in _tab_titles else None
 _all_tabs = st.tabs(
     ([_search_title] if _search_title else []) + _tab_titles,
-    default=_search_title or (_nav_tab if _nav_tab in _tab_titles else None),
+    default=_default_tab,
     key=f"main_tabs_{st.session_state.get('nav_count', 0)}")
 if _search_title:
     tab_search, *_all_tabs = _all_tabs
@@ -1141,7 +1215,7 @@ if _search_title:
         _c1, _c2 = st.columns([8, 1])
         _c1.markdown(f"**{len(_hits) or 'No'} place{'s' if len(_hits) != 1 else ''}** "
                      f"in the dashboard match “{_query}”"
-                     + ("; click one to go there." if _hits else "."))
+                     + ("; click one to go there (this tab stays open)." if _hits else "."))
         _c2.button("Close", key="search_close", on_click=_close_search, width="stretch")
         for _i, _h in enumerate(_hits):
             _loc = " › ".join(x for x in (_h["tab"], _h["page"], _h["section"]) if x)
@@ -1151,38 +1225,16 @@ if _search_title:
                       args=(_h["tab"], _h["page"], _h["section"], _h["detail"]),
                       disabled=_tab_title(_h["tab"]) is None, width="stretch")
             _t.markdown(_h["snippet"].replace("$", "\\$") + _more)
+    st.html(_JS_BACK_TO_SEARCH, unsafe_allow_javascript=True)
 tab_welcome, tab_table, tab_radar, tab_lines, tab_maps, tab_intervar, *tab_tail = _all_tabs
 tab_load = tab_tail[0] if tab_tail else None
 if st.session_state.pop("clear_url_hash", False):
     # A #section anchor left by an earlier click would stay in the URL after
-    # a new search (?search=...#old-section). Remove it from the app frame and
-    # from the hosting page (same origin on Streamlit Community Cloud); keep
-    # doing so for a while, since the run's own URL update comes at its end.
-    st.html(
-        "<script>const clr=()=>{for(const w of [window, window.parent]){try{"
-        "if(w.location.hash)w.history.replaceState(w.history.state,'',"
-        "w.location.pathname+w.location.search);}catch(e){}}};"
-        "clr();const iv=setInterval(clr,400);setTimeout(()=>clearInterval(iv),20000);</script>",
-        unsafe_allow_javascript=True,
-    )
+    # a new search (?search=...#old-section).
+    st.html(_JS_CLEAR_HASH, unsafe_allow_javascript=True)
 _nav_scroll = st.session_state.pop("nav_scroll", None)
 if _nav_scroll:
-    st.html(
-        "<script>(function(){const target=" + json.dumps(_nav_scroll) + ";"
-        "const norm=s=>s.normalize('NFKD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase()"
-        ".replace(/\\s+/g,' ').trim();const want=norm(target).slice(0,40);let n=0;"
-        "const t=setInterval(()=>{n++;let hit=null;"
-        "for(const p of document.querySelectorAll('[role=\"tabpanel\"]')){"
-        "if(p.hidden||p.offsetParent===null)continue;"
-        "for(const el of p.querySelectorAll('h1,h2,h3,h4,h5,summary,label,p,"
-        "[data-testid=\"stMarkdownContainer\"] > div')){"
-        "if(norm(el.textContent).startsWith(want)){hit=el;break;}}if(hit)break;}"
-        "if(hit){const d=hit.closest('details');if(d&&!d.open)d.open=true;"
-        "hit.scrollIntoView({behavior:'smooth',block:'start'});"
-        "hit.style.outline='3px solid #f6c344';setTimeout(()=>hit.style.outline='',2500);"
-        "clearInterval(t);}if(n>40)clearInterval(t);},250);})();</script>",
-        unsafe_allow_javascript=True,
-    )
+    st.html(_JS_GOTO % json.dumps(_nav_scroll), unsafe_allow_javascript=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 0 — Welcome (pedagogic)
