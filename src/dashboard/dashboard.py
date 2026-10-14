@@ -130,6 +130,7 @@ from plot_meta import (  # noqa: E402
     VAR_UNITS, vlabel, line_help, map_help, colorbar_label,
     LINE_PLOT_TYPES, MAP_PLOT_TYPES,
 )
+import search_index  # noqa: E402  (sidebar full-text search)
 try:
     from baselines import METHOD_LABELS, is_unpublished
 except ImportError:  # tolerate a stale checkout where baselines pre-dates the helper
@@ -510,12 +511,6 @@ METRIC_DOCS = {
     },
 }
 
-def _method_doc(m: str) -> dict | None:
-    """Return METHOD_DOCS entry for a method key, resolving aliases."""
-    key = {"consistency": "cm", "cm": "cm", "corrdiff_qm": "corrdiff_qm"}.get(m, m)
-    return METHOD_DOCS.get(key)
-
-
 # ── World map with clickable region boxes (region navigation) ────────────────
 
 def _rounded_square(n, w, s, e, r):
@@ -850,6 +845,21 @@ PROTOCOL_PRIMER = (
 )
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
+@st.cache_data(show_spinner=False)
+def _app_search_index() -> list[dict]:
+    """Every displayable string of this app and of plot_meta, with its tab and section."""
+    here = Path(__file__).resolve().parent
+    tabs = {"tab_welcome": "Welcome", "tab_table": "Metrics table", "tab_radar": "Radar",
+            "tab_lines": "Line plots", "tab_maps": "Spatial maps",
+            "tab_intervar": "Inter-variable", "tab_load": "Load Forecasting (TAM)"}
+    docs = {"METHOD_DOCS": ("Welcome", "Methods"), "METHOD_LINKS": ("Welcome", "Methods"),
+            "METHOD_OVERVIEW_MD": ("Welcome", "Methods"), "METRIC_DOCS": ("Welcome", "Metrics"),
+            "METRIC_IMPL": ("Welcome", "Metrics"), "METRIC_LABELS": ("Metrics table", "")}
+    return (search_index.build_index((here / "dashboard.py").read_text(), tabs, docs)
+            + search_index.build_index((here / "plot_meta.py").read_text(), {}, {},
+                                       ("Line plots / Spatial maps", "plot captions")))
+
+
 with st.sidebar:
     st.header("Filters")
     sel_methods = st.multiselect(
@@ -883,23 +893,25 @@ with st.sidebar:
 
     st.markdown("---")
     search_query = st.text_input("🔎 Search", key="search_box",
-                                 placeholder="e.g. bias, BCSD, extremes, trend...")
+                                 placeholder="any word: SSR, Dunkelflaute, Wasserstein…")
     if search_query.strip():
-        q = search_query.strip().lower()
-        hit_methods = [m for m in all_method_dirs
-                       if q in mlabel(m).lower() or q in m.lower()
-                       or q in (_method_doc(m) or {}).get("simple", "").lower()
-                       or q in (_method_doc(m) or {}).get("type", "").lower()]
-        hit_metrics = [k for k, d in METRIC_DOCS.items()
-                       if q in d["name"].lower() or q in d["simple"].lower()]
-        if hit_methods or hit_metrics:
-            st.success(f"**{len(hit_methods)} method(s) · {len(hit_metrics)} metric(s) found**")
-            if hit_methods:
-                st.markdown("— *Methods:* " + ", ".join(mlabel(m) for m in hit_methods))
-            if hit_metrics:
-                st.markdown("— *Metrics:* " + ", ".join(METRIC_DOCS[k]["name"] for k in hit_metrics))
+        _hits = search_index.search(_app_search_index(), search_query)
+        if _hits:
+            st.success(f"Found in {len(_hits)} place{'s' if len(_hits) > 1 else ''}")
+            for _h in _hits:
+                _loc = _h["tab"] + (f" › {_h['section']}" if _h["section"] else "")
+                _more = f" (+{_h['count'] - 1} more there)" if _h["count"] > 1 else ""
+                st.markdown(f"**{_loc}**{_more}")
+                st.caption(_h["snippet"].replace("$", "\\$"))
         else:
-            st.caption("No matches — try a method or metric name.")
+            st.caption("No matches.")
+
+    st.markdown("---")
+    st.caption(
+        "**AI use.** This dashboard was developed and is maintained with the help of AI "
+        "coding assistants (Claude / OpenCode), which were also used to help reproduce "
+        "most of the baseline results shown here."
+    )
 
 # ── Metric groups ─────────────────────────────────────────────────────────────
 OBS_METRICS = [
@@ -2895,12 +2907,3 @@ if tab_load is not None:
                 )
             else:
                 st.info("No TAM metrics available for this selection.")
-
-# ── Footer (rendered below every tab) ────────────────────────────────────────
-st.divider()
-st.markdown(
-    "#### AI use\n"
-    "This dashboard was developed and is maintained with the help of AI coding "
-    "assistants (Claude / OpenCode), which were also used to help reproduce most "
-    "of the baseline results shown here."
-)
