@@ -84,7 +84,6 @@ GCM_MESH = {
 
 IMG_RESOLUTION_GAP = STATIC_DIR / "resolution_gap.png"
 IMG_BIAS_COMPARISON = STATIC_DIR / "bias_comparison.png"
-IMG_METHOD_SPECTRUM = STATIC_DIR / "method_spectrum.png"
 
 # HTML pipeline diagram for the Welcome tab (self-contained design)
 _PIPELINE_HTML = """
@@ -683,6 +682,21 @@ def _load_world_lines():
     _npz = STATIC_DIR / "world_lines.npz"
     _d = np.load(_npz)
     return _d["coast_x"], _d["coast_y"], _d["border_x"], _d["border_y"]
+
+# Factual overview of the nine baselines (Welcome → Methods).
+METHOD_OVERVIEW_MD = """
+| Method | Fitted / trained on | Fine-scale detail from | Variables | Output |
+|---|---|---|---|---|
+| Bicubic | nothing | none (interpolated GCM) | each | deterministic |
+| EQM | GCM vs ERA5 monthly means | ERA5 monthly climatology | each | deterministic |
+| BCSD | GCM vs ERA5 monthly means, tas detrended | ERA5 monthly climatology | each | deterministic |
+| CDF-t | GCM vs ERA5 per cell and month, 20-year windows | ERA5 distribution of each cell | each | deterministic |
+| dOTC | GCM vs ERA5 per cell and month, 20-year windows | ERA5 distribution of each cell | joint (per cell) | deterministic |
+| iDownscale | ERA5 only (GCM: CDF-t at coarse resolution) | U-Net regression | joint | deterministic |
+| CorrDiff-QM | ERA5 only (GCM: quantile mapping) | regression + diffusion | joint | one random draw |
+| CM | ERA5 only (GCM: quantile delta mapping) | one-step denoising | joint | one random draw |
+| SerpentFlow-CLIM | ERA5 only (GCM: low-pass, CDF-t climatology) | flow matching | joint | one random draw |
+"""
 
 # ── Publications / reference code / implementation links ─────────────────────
 # pub  → published paper or public reference implementation of the method
@@ -1439,8 +1453,14 @@ with tab_welcome:
     elif ww_mode == "Methods":
         st.markdown("#### The baselines: from interpolation to generative models")
         m_detailed = st.toggle("Show detailed documentation (equations, hyperparameters)", key="welcome_methods_detailed")
-        if IMG_METHOD_SPECTRUM.exists():
-            st.image(str(IMG_METHOD_SPECTRUM), width="stretch")
+        st.markdown(METHOD_OVERVIEW_MD)
+        st.caption(
+            "All fits use 1980–1999. \"Each\": variables are corrected one at a time; "
+            "\"joint\": all variables enter one model together. The four networks are "
+            "trained on ERA5 alone; at inference the GCM is first bias-corrected (in "
+            "brackets) before the network sees it. Random draws are seeded; the scored "
+            "output is one draw, not an ensemble mean."
+        )
         for m in ["bicubic", "eqm", "bcsd", "cdft", "dotc", "idownscale", "corrdiff_qm", "cm", "serpentflowclim"]:
             doc = METHOD_DOCS[m]
             link = METHOD_LINKS.get(m, {})

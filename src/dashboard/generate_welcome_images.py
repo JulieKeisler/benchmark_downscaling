@@ -167,31 +167,8 @@ def make_bias_comparison():
     print(f"  Saved {OUT / 'bias_comparison.png'}")
 
 
-# ── Image 3: Method spectrum (simple vs complex) ─────────────────────────────
-def make_method_spectrum():
-    """Bar chart showing method complexity: simple → complex."""
-    fig, ax = plt.subplots(figsize=(10, 3.5))
-    methods = ["Bicubic", "BCSD", "CDF-t", "DOTC", "iDownscale", "CorrDiff-QM", "CM"]
-    complexity = [0, 1, 2, 2, 5, 8, 7]  # relative complexity score
-    colors = ["#4C72B0", "#55A868", "#55A868", "#55A868", "#C44E52", "#8172B2", "#8172B2"]
-    categories = ["None", "Statistical", "Statistical", "Statistical", "Neural", "Neural", "Neural"]
-    bars = ax.barh(methods, complexity, color=colors, edgecolor="white", height=0.6)
-    for bar, cat in zip(bars, categories):
-        w = bar.get_width()
-        ax.text(w + 0.15, bar.get_y() + bar.get_height()/2, cat,
-                va="center", fontsize=9, color="gray")
-    ax.set_xlabel("Relative complexity", fontsize=10)
-    ax.set_xlim(0, 11)
-    ax.set_title("Method spectrum: statistical → neural", fontsize=12, fontweight="bold")
-    ax.invert_yaxis()
-    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
-    _save_padded(fig, "method_spectrum.png", dpi=150, pad_px=40)
-    print(f"  Saved {OUT / 'method_spectrum.png'}")
-
-
 if __name__ == "__main__":
     print("Generating welcome page images...")
     make_resolution_gap()
     make_bias_comparison()
-    make_method_spectrum()
     print("Done.")
