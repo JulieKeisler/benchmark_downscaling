@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
-"""BCSD baseline inference — Bias-Corrected Spatial Disaggregation (Wood et al. 2002).
+"""BCSD baseline inference — Bias-Corrected Spatial Disaggregation (Wood et al. 2002, 2004).
 
 Monthly-mean QM at GCM resolution, then daily temporal disaggregation and spatial
 interpolation to the ERA5 grid. A separate calibration period is used to fit QM.
+
+As in Wood et al. (2004), the GCM's tas trend is removed before the quantile map
+and added back after it: within each 20-year window the monthly-mean change
+relative to the calibration period is subtracted, mapped, and re-added, so
+warmer future months are not clamped to the top of the 1980-1999 range.
+`--no-detrend` reproduces the earlier variant, kept in the benchmark as
+"EQM (no detrending)" (`--method eqm`), which loses part of the warming.
 
 Usage:
     python baselines/inference_bcsd.py \
@@ -29,12 +36,48 @@ from data_processing import (
     DEFAULT_VARIABLES, load_era5, load_gcm, align_time, save_predictions,
 )
 from methods import _qmap_1d
+
+
+def _box_average(obs: xr.DataArray, lat_c: np.ndarray, lon_c: np.ndarray) -> xr.DataArray:
+    """Average ERA5 onto GCM cells: each ERA5 point goes to its nearest GCM centre.
+
+    Wood et al. (2002) aggregate the observations to the GCM grid; point
+    interpolation at cell centres would keep sub-grid ERA5 variance and
+    orography in the quantile-map target.
+    """
+    da = np.abs(obs.lat.values[:, None] - lat_c[None, :])
+    db = np.abs(obs.lon.values[:, None] - lon_c[None, :])
+    ia, ib = da.argmin(1), db.argmin(1)
+    # Points beyond half a cell from every centre belong to no GCM cell. Edge
+    # cells only partly inside the ERA5 box average their inner part.
+    in_a = da.min(1) <= 0.5 * np.abs(np.diff(lat_c)).mean() + 1e-6
+    in_b = db.min(1) <= 0.5 * np.abs(np.diff(lon_c)).mean() + 1e-6
+    keep = (in_a[:, None] & in_b[None, :]).ravel()
+    cell = (ia[:, None] * len(lon_c) + ib[None, :]).ravel()
+    n_cells = len(lat_c) * len(lon_c)
+    counts = np.bincount(cell[keep], minlength=n_cells).astype(np.float64)
+    vals = obs.values.reshape(obs.shape[0], -1)
+    sums = np.zeros((obs.shape[0], n_cells))
+    for c in np.unique(cell[keep]):
+        sums[:, c] = vals[:, keep & (cell == c)].sum(1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        coarse = (sums / counts).reshape(obs.shape[0], len(lat_c), len(lon_c))
+    out = xr.DataArray(coarse, dims=("time", "lat", "lon"),
+                       coords={"time": obs.time, "lat": lat_c, "lon": lon_c})
+    if np.isnan(coarse).any():  # GCM cells centred outside the ERA5 box: nearest ERA5 value
+        near = obs.interp(lat=out.lat, lon=out.lon, method="nearest",
+                          kwargs={"fill_value": None})
+        out = out.fillna(near)
+    if np.isnan(out.values).any():
+        raise ValueError("_box_average: NaN left in the QM target")
+    return out
 from inference_cdft import _sliding_windows
 
 def bcsd_downscale(gcm: xr.DataArray, obs: xr.DataArray,
                    variable: str,
                    gcm_calib: "xr.DataArray | None" = None,
-                   obs_calib: "xr.DataArray | None" = None) -> xr.DataArray:
+                   obs_calib: "xr.DataArray | None" = None,
+                   detrend: bool = True) -> xr.DataArray:
     """BCSD: monthly-mean QM at GCM resolution + spatial disaggregation (Wood et al. 2002).
 
     Preserves the GCM's month-to-month climate signal by bias-correcting monthly
@@ -66,8 +109,12 @@ def bcsd_downscale(gcm: xr.DataArray, obs: xr.DataArray,
         if gcm_cal is not None and gcm_cal is not gcm:
             gcm_cal = gcm_cal.assign_coords(lon=gcm_cal.lon.values - 360.0).sortby("lon")
 
-    # Step 1: Coarsen ERA5 (calib) to GCM grid
-    obs_coarse = obs_cal.interp(lat=gcm.lat, lon=gcm.lon, method="linear")
+    # Step 1: Coarsen ERA5 (calib) to GCM grid — area average (Wood 2002) for
+    # BCSD; the EQM variant keeps the original point interpolation.
+    if detrend:
+        obs_coarse = _box_average(obs_cal, gcm.lat.values, gcm.lon.values)
+    else:
+        obs_coarse = obs_cal.interp(lat=gcm.lat, lon=gcm.lon, method="linear")
 
     # Step 2: Monthly means for QM fitting (calib period)
     gcm_cal_mon = gcm_cal.resample(time="ME").mean("time")   # [N_calib_mon, lat, lon]
@@ -88,10 +135,17 @@ def bcsd_downscale(gcm: xr.DataArray, obs: xr.DataArray,
         obs_c = obs_cal_mon.values[c_mask]   # [N_calib_yrs, lat, lon]
         gcm_e = gcm_eval_mon.values[e_mask]  # [N_eval_yrs, lat, lon]
         bc_e  = gcm_e.copy()
+        # Wood et al. (2004): remove the GCM tas change before mapping, so the map
+        # sees calibration-like values, then re-add it (shift per coarse cell).
+        if detrend and variable == "tas":
+            shift = gcm_e.mean(axis=0) - gcm_c.mean(axis=0)
+        else:
+            shift = np.zeros(gcm_e.shape[1:], dtype=gcm_e.dtype)
         nlat, nlon = gcm_c.shape[1], gcm_c.shape[2]
         for i in range(nlat):
             for j in range(nlon):
-                bc_e[:, i, j] = _qmap_1d(gcm_c[:, i, j], obs_c[:, i, j], gcm_e[:, i, j])
+                bc_e[:, i, j] = _qmap_1d(gcm_c[:, i, j], obs_c[:, i, j],
+                                         gcm_e[:, i, j] - shift[i, j]) + shift[i, j]
         bc_mon_np[e_mask] = bc_e
 
     # Step 5: Daily disaggregation — vectorized index lookup
@@ -158,6 +212,7 @@ def run(
     eval_end:    int,
     scenario: str = "ssp370",
     win_size: int = 20, step: int = 10, trim: int = 5,
+    detrend: bool = True,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Calib: {calib_start}–{calib_end}  |  Eval: {eval_start}–{eval_end}"
@@ -168,7 +223,8 @@ def run(
         print(f"  Loading {var} ...", flush=True)
         era5_cal[var] = load_era5(era5_dir, var, calib_start, calib_end)
         gcm_cal[var]  = load_gcm(gcm_dir, var, calib_start, calib_end, "historical")
-        gcm_eval[var] = load_gcm(gcm_dir, var, eval_start, eval_end, scenario)
+        # From eval_start - trim, so the first window (e.g. 1995-2014) is full.
+        gcm_eval[var] = load_gcm(gcm_dir, var, eval_start - trim, eval_end, scenario)
 
     all_cal = {}
     for var in variables:
@@ -182,7 +238,7 @@ def run(
     ref_da  = None
     arrays  = []
     for var in variables:
-        print(f"  BCSD {var} ({len(windows)} windows) ...", flush=True)
+        print(f"  BCSD {var} ({len(windows)} windows, detrend={detrend}) ...", flush=True)
         gcm_c = gcm_cal[var]
         obs_c = era5_cal[var]
 
@@ -192,7 +248,8 @@ def run(
             gcm_win  = gcm_eval[var].isel(time=(yr >= win_start) & (yr <= win_end))
             if gcm_win.sizes["time"] == 0:
                 continue
-            pred_win = bcsd_downscale(gcm_win, obs_c, var, gcm_calib=gcm_c, obs_calib=obs_c)
+            pred_win = bcsd_downscale(gcm_win, obs_c, var, gcm_calib=gcm_c, obs_calib=obs_c,
+                                      detrend=detrend)
             yr_p     = pred_win.time.dt.year.values
             pieces.append(pred_win.isel(time=(yr_p >= keep_start) & (yr_p <= keep_end)))
 
@@ -219,6 +276,8 @@ def main():
     p.add_argument("--win-size",    type=int, default=20)
     p.add_argument("--step",        type=int, default=10)
     p.add_argument("--trim",        type=int, default=5)
+    p.add_argument("--no-detrend",  action="store_true",
+                   help="EQM variant: quantile-map tas without removing the GCM trend")
     args = p.parse_args()
     run(
         Path(args.era5_dir), Path(args.gcm_dir), Path(args.out_dir),
@@ -227,6 +286,7 @@ def main():
         args.eval_start,  args.eval_end,
         args.scenario,
         args.win_size, args.step, args.trim,
+        not args.no_detrend,
     )
 
 

@@ -24,6 +24,7 @@ Checkpoints are written to <out_dir>/checkpoints/:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
 from pathlib import Path
@@ -153,6 +154,71 @@ def sample_residual(
 
 # ── Training ────────────────────────────────────────────────────────────────────
 
+def _fit(model: nn.Module, batch_loss, val_loss, T: int, n_epochs: int,
+         batch_size: int, lr: float, device: str, ckpt: Path | None,
+         patience: int, tag: str, config: dict | None = None) -> nn.Module:
+    """Train with early stopping on a held-out validation loss.
+
+    batch_loss(model, idx) -> scalar training loss on samples idx;
+    val_loss(model) -> float, deterministic (fixed noise) so epochs compare,
+    or None without a validation set (then the last epoch is kept).
+    The learning rate halves after 5 epochs without improvement, training stops
+    after `patience` and returns the best weights. With `ckpt`, the state is
+    saved every epoch and a restarted job resumes from it.
+    """
+    model = model.to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95))
+    sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, factor=0.5, patience=5)
+    start, best, best_state, bad = 0, float("inf"), None, 0
+    if ckpt is not None and ckpt.exists():
+        st = torch.load(ckpt, map_location=device, weights_only=False)
+        if st.get("config") != config:
+            raise RuntimeError(f"{ckpt} was written with config {st.get('config')}, "
+                               f"not {config}: refusing to resume (use a fresh --out-dir)")
+        model.load_state_dict(st["model"]); opt.load_state_dict(st["opt"])
+        sched.load_state_dict(st["sched"])
+        start, best, best_state, bad = st["epoch"] + 1, st["best"], st["best_state"], st["bad"]
+        print(f"    [corrdiff] {tag}: resumed at epoch {start + 1} (best val {best:.5f})", flush=True)
+    for epoch in range(start, n_epochs):
+        if bad >= patience:
+            break
+        model.train()
+        perm = torch.randperm(T)
+        tot = 0.0
+        for i in range(0, T, batch_size):
+            idx = perm[i:i + batch_size]
+            opt.zero_grad()
+            loss = batch_loss(model, idx)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+            tot += loss.item() * len(idx)
+        model.eval()
+        with torch.no_grad():
+            v = val_loss(model)
+        if v is None:
+            best_state = {k: t.detach().cpu().clone() for k, t in model.state_dict().items()}
+            print(f"    [corrdiff] {tag} epoch {epoch + 1}/{n_epochs} "
+                  f"loss={tot / T:.5f}", flush=True)
+            continue
+        sched.step(v)
+        if v < best:
+            best, bad = v, 0
+            best_state = {k: t.detach().cpu().clone() for k, t in model.state_dict().items()}
+        else:
+            bad += 1
+        print(f"    [corrdiff] {tag} epoch {epoch + 1}/{n_epochs} train={tot / T:.5f} "
+              f"val={v:.5f} best={best:.5f} lr={opt.param_groups[0]['lr']:.1e}", flush=True)
+        if ckpt is not None:
+            torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
+                        "sched": sched.state_dict(), "epoch": epoch, "best": best,
+                        "best_state": best_state, "bad": bad, "config": config}, ckpt)
+    if bad >= patience:
+        print(f"    [corrdiff] {tag}: early stop, best val {best:.5f}", flush=True)
+    model.load_state_dict(best_state)
+    return model
+
+
 def train_stage1(
     x_lr:      np.ndarray,     # [T, C, H, W] normalised coarsened ERA5
     y_hr:      np.ndarray,     # [T, C, H, W] normalised ERA5
@@ -162,34 +228,39 @@ def train_stage1(
     lr:        float = 2e-4,
     device:    str  = "cpu",
     net:       nn.Module | None = None,
+    n_val:     int  = 0,
+    patience:  int  = 15,
+    ckpt:      Path | None = None,
+    config:    dict | None = None,
 ) -> nn.Module:
-    """Stage 1 — deterministic regression UNet (mean prediction)."""
+    """Stage 1 — deterministic regression UNet (mean prediction).
+
+    The last `n_val` days are held out for early stopping (0: no hold-out,
+    fixed `n_epochs` as before).
+    """
     T, _, H, W = y_hr.shape
     if net is None:
         net = UNet(in_channels=N_VARS + 2, out_channels=N_VARS)
-    model = net.to(device)
-    opt    = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95))
     mc     = torch.from_numpy(month_channels(months, (T, H, W)))
     x_lr_t = torch.from_numpy(x_lr)
     y_t    = torch.from_numpy(y_hr)
+    T_tr   = T - n_val
 
-    for epoch in range(n_epochs):
-        model.train()
-        perm = torch.randperm(T)
-        tot  = 0.0
-        for i in range(0, T, batch_size):
-            idx = perm[i:i + batch_size]
-            b_in  = torch.cat([x_lr_t[idx], mc[idx]], dim=1).to(device)
-            b_hr  = y_t[idx].to(device)
-            opt.zero_grad()
-            loss = torch.nn.functional.mse_loss(model(b_in), b_hr)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step()
-            tot  += loss.item() * len(idx)
-        print(f"    [corrdiff] Stage1 epoch {epoch + 1}/{n_epochs} "
-              f"loss={tot / T:.5f}", flush=True)
-    return model
+    def batch_loss(model, idx):
+        b_in = torch.cat([x_lr_t[idx], mc[idx]], dim=1).to(device)
+        return torch.nn.functional.mse_loss(model(b_in), y_t[idx].to(device))
+
+    def val_loss(model):
+        if n_val == 0:
+            return None
+        tot = 0.0
+        for i in range(T_tr, T, batch_size):
+            idx = torch.arange(i, min(i + batch_size, T))
+            tot += batch_loss(model, idx).item() * len(idx)
+        return tot / n_val
+
+    return _fit(net, batch_loss, val_loss, T_tr, n_epochs, batch_size, lr, device,
+                ckpt, patience, "Stage1", config)
 
 
 def train_stage2(
@@ -203,42 +274,53 @@ def train_stage2(
     device:    str  = "cpu",
     n_diff_t:  int  = N_DIFF_T,
     net:       nn.Module | None = None,
+    n_val:     int  = 0,
+    patience:  int  = 15,
+    ckpt:      Path | None = None,
+    config:    dict | None = None,
 ) -> nn.Module:
-    """Stage 2 — residual diffusion: denoise r conditioned on (x_lr, mu, month)."""
+    """Stage 2 — residual diffusion: denoise r conditioned on (x_lr, mu, month).
+
+    The validation loss draws its diffusion times and noise from a fixed
+    generator, so the only difference between epochs is the network.
+    """
     T, _, H, W = res.shape
     if net is None:
         net = DiffusersUNet(in_channels=N_DIFF_IN, out_channels=N_VARS)
-    net = net.to(device)
-    opt  = torch.optim.AdamW(net.parameters(), lr=lr, betas=(0.9, 0.95))
     mc   = torch.from_numpy(month_channels(months, (T, H, W)))
     x_lr_t = torch.from_numpy(x_lr)
     m_t  = torch.from_numpy(mu)
     r_t  = torch.from_numpy(res)
     abar = _schedule(n_diff_t).to(device)
+    T_tr = T - n_val
 
-    for epoch in range(n_epochs):
-        net.train()
-        perm = torch.randperm(T)
-        tot  = 0.0
-        for i in range(0, T, batch_size):
-            idx = perm[i:i + batch_size]
-            b_in  = torch.cat([x_lr_t[idx], m_t[idx]], dim=1).to(device)
-            b_r   = r_t[idx].to(device)
-            b_mc  = mc[idx].to(device)
-            t     = torch.randint(1, n_diff_t + 1, (len(idx),), device=device)
-            eps   = torch.randn_like(b_r)
-            x_n   = q_sample(b_r, t, abar, eps)
-            opt.zero_grad()
-            eps_pred = net(torch.cat([b_in, x_n, b_mc], dim=1),
-                           t.float() / n_diff_t * 1000.0)
-            loss = torch.nn.functional.mse_loss(eps_pred, eps)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
-            opt.step()
-            tot += loss.item() * len(idx)
-        print(f"    [corrdiff] Stage2 epoch {epoch + 1}/{n_epochs} "
-              f"loss={tot / T:.5f}", flush=True)
-    return net
+    def loss_on(model, idx, t, eps):
+        b_in = torch.cat([x_lr_t[idx], m_t[idx]], dim=1).to(device)
+        x_n  = q_sample(r_t[idx].to(device), t, abar, eps)
+        eps_pred = model(torch.cat([b_in, x_n, mc[idx].to(device)], dim=1),
+                         t.float() / n_diff_t * 1000.0)
+        return torch.nn.functional.mse_loss(eps_pred, eps)
+
+    def batch_loss(model, idx):
+        t = torch.randint(1, n_diff_t + 1, (len(idx),), device=device)
+        return loss_on(model, idx, t, torch.randn_like(r_t[idx]).to(device))
+
+    g = torch.Generator().manual_seed(0)
+    val_t = torch.randint(1, n_diff_t + 1, (max(n_val, 1),), generator=g)
+    val_eps = torch.randn((max(n_val, 1), *res.shape[1:]), generator=g)
+
+    def val_loss(model):
+        if n_val == 0:
+            return None
+        tot = 0.0
+        for i in range(T_tr, T, batch_size):
+            idx = torch.arange(i, min(i + batch_size, T))
+            k = idx - T_tr
+            tot += loss_on(model, idx, val_t[k].to(device), val_eps[k].to(device)).item() * len(idx)
+        return tot / n_val
+
+    return _fit(net, batch_loss, val_loss, T_tr, n_epochs, batch_size, lr, device,
+                ckpt, patience, "Stage2", config)
 
 
 def train_corrdiff(
@@ -252,9 +334,19 @@ def train_corrdiff(
     n_diff_t:  int  = N_DIFF_T,
     stage1_net: nn.Module | None = None,
     stage2_net: nn.Module | None = None,
+    n_val:     int  = 0,
+    patience:  int  = 15,
 ) -> tuple[dict, nn.Module, nn.Module]:
-    """Train both stages on ERA5 and write checkpoints."""
+    """Train both stages on ERA5 and write checkpoints.
+
+    With n_val > 0, the last n_val days are a validation set for early stopping
+    and each stage keeps a resumable state in checkpoints/ (a job that hits its
+    time limit is simply resubmitted). Normalisation stats use all days.
+    """
     T, _, H, W = raw.shape
+    config = {"epochs": n_epochs, "batch_size": batch_size, "lr": lr, "n_val": n_val,
+              "patience": patience, "variables": list(VARIABLES), "T": int(T),
+              "n_diff_t": n_diff_t}
     stats = compute_stats(raw, VARIABLES)
     norm  = np.empty((T, N_VARS, H, W), dtype=np.float32)
     for i, var in enumerate(VARIABLES):
@@ -262,9 +354,13 @@ def train_corrdiff(
 
     x_lr = _coarsen_upsample(norm, STRIDE)
 
+    ckpt_dir = out_dir / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
     reg  = train_stage1(x_lr, norm, months, n_epochs=n_epochs,
                         batch_size=batch_size, lr=lr, device=device,
-                        net=stage1_net)
+                        net=stage1_net, n_val=n_val, patience=patience,
+                        ckpt=ckpt_dir / "stage1_state.pt" if n_val else None,
+                        config=config)
     reg.eval()
     with torch.no_grad():
         mc_all = torch.from_numpy(month_channels(months, (T, H, W))).to(device)
@@ -278,10 +374,11 @@ def train_corrdiff(
 
     diff = train_stage2(x_lr, mu_np, res, months, n_epochs=n_epochs,
                         batch_size=batch_size, lr=lr, device=device,
-                        n_diff_t=n_diff_t, net=stage2_net)
+                        n_diff_t=n_diff_t, net=stage2_net, n_val=n_val,
+                        patience=patience,
+                        ckpt=ckpt_dir / "stage2_state.pt" if n_val else None,
+                        config=config)
 
-    ckpt_dir = out_dir / "checkpoints"
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
     torch.save({
         "model": reg.state_dict(), "stats": stats, "variables": VARIABLES,
         "stride": STRIDE, "arch": REG_ARCH, "in_channels": N_VARS + 2,
@@ -292,6 +389,7 @@ def train_corrdiff(
         "stride": STRIDE, "arch": DIFF_ARCH, "in_channels": N_DIFF_IN,
         "out_channels": N_VARS, "n_diff_t": n_diff_t,
     }, ckpt_dir / "corrdiff_resdiff.pt")
+    (ckpt_dir / "TRAIN_CONFIG.json").write_text(json.dumps(config, indent=1))
     return stats, reg, diff
 
 
@@ -389,11 +487,17 @@ def run_inference(
     batch_size:  int   = 128,
     device:      str   = "cpu",
     seed:        int   = 0,
+    ckpt_dir:    Path | None = None,
 ) -> None:
-    """CorrDiff-QM inference on the GCM: QM → Stage 1 → Stage 2 → save."""
+    """CorrDiff-QM inference on the GCM: QM → Stage 1 → Stage 2 → save.
+
+    With n_members=1 the output is one stochastic draw (seeded), which is what
+    the benchmark scores; n_members>1 averages draws (deflates variance).
+    """
     torch.manual_seed(seed)
-    ckpt_reg  = out_dir / "checkpoints" / "corrdiff_reg.pt"
-    ckpt_diff = out_dir / "checkpoints" / "corrdiff_resdiff.pt"
+    ckpt_dir  = ckpt_dir or out_dir / "checkpoints"
+    ckpt_reg  = ckpt_dir / "corrdiff_reg.pt"
+    ckpt_diff = ckpt_dir / "corrdiff_resdiff.pt"
     if not ckpt_reg.exists() or not ckpt_diff.exists():
         raise FileNotFoundError(
             f"No CorrDiff-QM checkpoints at {out_dir / 'checkpoints'}. "
@@ -405,7 +509,7 @@ def run_inference(
     n_diff_t  = diff_ckpt.get("n_diff_t", N_DIFF_T)
 
     if "ref_lat" not in reg_ckpt:
-        grid_ck = out_dir / "checkpoints" / "corrdiff_grid.pt"
+        grid_ck = ckpt_dir / "corrdiff_grid.pt"
         if not grid_ck.exists():
             raise FileNotFoundError(
                 "CorrDiff-QM checkpoints lack the ERA5 grid (ref_lat/ref_lon). "
@@ -502,9 +606,17 @@ def main() -> None:
     p.add_argument("--epochs",        type=int,   default=5)
     p.add_argument("--batch-size",    type=int,   default=16)
     p.add_argument("--lr",            type=float, default=2e-4)
-    p.add_argument("--n-members",     type=int,   default=10)
+    p.add_argument("--n-members",     type=int,   default=1,
+                   help="draws averaged per field; the benchmark scores 1 (a mean deflates variance)")
     p.add_argument("--sample-steps",  type=int,   default=50)
     p.add_argument("--seed",          type=int,   default=0)
+    p.add_argument("--val-days",      type=int,   default=0,
+                   help="hold out the last N calibration days for early stopping "
+                        "(0: fixed --epochs, no hold-out)")
+    p.add_argument("--patience",      type=int,   default=15)
+    p.add_argument("--ckpt-dir",      default=None,
+                   help="read checkpoints from here instead of <out-dir>/checkpoints "
+                        "(e.g. extra seeds written to another dir)")
     p.add_argument("--train",         action="store_true")
     p.add_argument("--predict",       action="store_true")
     p.add_argument("--variables",     nargs="+", default=None,
@@ -531,28 +643,45 @@ def main() -> None:
         Path(out_dir / "checkpoints").mkdir(exist_ok=True)
         torch.save({"ref_lat": lat, "ref_lon": lon},
                    out_dir / "checkpoints" / "corrdiff_grid.pt")
-        train_corrdiff(raw, months, out_dir, n_epochs=args.epochs,
-                       batch_size=args.batch_size, lr=args.lr, device=device)
+        if (out_dir / "checkpoints" / "TRAIN_DONE").exists():
+            done = json.loads((out_dir / "checkpoints" / "TRAIN_CONFIG.json").read_text())
+            want = {"epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr,
+                    "n_val": args.val_days, "patience": args.patience,
+                    "variables": list(VARIABLES)}
+            if any(done.get(k) != v for k, v in want.items()):
+                raise SystemExit(f"TRAIN_DONE was trained with {done}, not {want}: use a fresh --out-dir")
+            print("  [corrdiff] TRAIN_DONE present (same config), skipping training", flush=True)
+        else:
+            train_corrdiff(raw, months, out_dir, n_epochs=args.epochs,
+                           batch_size=args.batch_size, lr=args.lr, device=device,
+                           n_val=args.val_days, patience=args.patience)
+            (out_dir / "checkpoints" / "TRAIN_DONE").touch()
 
     if do_predict:
         if not args.gcm_dir:
             raise SystemExit("--gcm-dir is required for --predict")
-        grid_ck = out_dir / "checkpoints" / "corrdiff_grid.pt"
+        ckpt_dir = Path(args.ckpt_dir) if args.ckpt_dir else out_dir / "checkpoints"
+        grid_ck = ckpt_dir / "corrdiff_grid.pt"
         if not grid_ck.exists():
             raise FileNotFoundError(
                 "No corrdiff_grid.pt — run --train first (stores ERA5 grid).")
         grid = torch.load(grid_ck, map_location="cpu", weights_only=False)
         # stash ref_lat/ref_lon into the regression checkpoint for inference
-        ckpt_reg = out_dir / "checkpoints" / "corrdiff_reg.pt"
+        ckpt_reg = ckpt_dir / "corrdiff_reg.pt"
         obj = torch.load(ckpt_reg, map_location="cpu", weights_only=False)
-        obj.setdefault("ref_lat", grid["ref_lat"])
-        obj.setdefault("ref_lon", grid["ref_lon"])
-        torch.save(obj, ckpt_reg)
+        if "ref_lat" not in obj or "ref_lon" not in obj:
+            # Write once: other jobs may be reading this shared checkpoint concurrently.
+            obj.setdefault("ref_lat", grid["ref_lat"])
+            obj.setdefault("ref_lon", grid["ref_lon"])
+            tmp = ckpt_reg.with_suffix(".tmp")
+            torch.save(obj, tmp)
+            tmp.replace(ckpt_reg)
         run_inference(out_dir, Path(args.era5_dir), Path(args.gcm_dir),
                       calib_start=args.calib_start, calib_end=args.calib_end,
                       eval_start=args.eval_start, eval_end=args.eval_end,
                       scenario=args.scenario, n_members=args.n_members,
-                      n_steps=args.sample_steps, device=device, seed=args.seed)
+                      n_steps=args.sample_steps, device=device, seed=args.seed,
+                      ckpt_dir=ckpt_dir)
 
 
 def _load_era5_raw(out_dir: Path, era5_dir: Path,

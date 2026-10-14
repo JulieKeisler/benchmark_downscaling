@@ -38,7 +38,7 @@ from metrics import (
     extreme_freq_bias, extreme_intensity_bias, clim_rmse,
     mean_temporal_corr, mean_temporal_corr_annual,
     lag1_autocorr_mae, annual_anomaly_bias,
-    intervar_corr_mae, spatial_spectrum_metric,
+    intervar_corr_mae, spatial_spectrum_metric, fine_spectrum_metric,
     delta_change_score,
 )
 from plots import (
@@ -277,6 +277,7 @@ def compute_all_metrics(
     gcm_on_era5: xr.DataArray,
     pred_gcm: xr.DataArray,
     n_timesteps: int,
+    variable: str | None = None,
 ) -> tuple[dict, dict, dict]:
     """Return (metrics_vs_obs, metrics_vs_gcm, plot_series) as dicts.
 
@@ -288,6 +289,9 @@ def compute_all_metrics(
     Metrics requiring daily data are omitted when n_timesteps < 200.
     """
     daily = n_timesteps >= 200
+    for name, da in (("obs", obs), ("pred_obs", pred_obs), ("gcm", gcm_on_era5), ("pred_gcm", pred_gcm)):
+        if da.dtype != np.float64:   # contract §E: reductions only in float64
+            raise TypeError(f"compute_all_metrics: {name} is {da.dtype}, not float64")
 
     vs_obs: dict = {
         "bias_mae":  spatial_mean_abs_bias(obs, pred_obs),
@@ -303,6 +307,10 @@ def compute_all_metrics(
     # Spatial spectrum metric (ERA5 period)
     spec_score, spec_data = spatial_spectrum_metric(obs, pred_obs)
     vs_obs["spectral_mae"] = spec_score
+    # Fine scales (< 200 km), where downscaling adds information (contract §D)
+    fine_score, fine_bias, fine_data = fine_spectrum_metric(obs, pred_obs, variable=variable)
+    vs_obs["spectral_fine"] = fine_score
+    vs_obs["spectral_fine_bias"] = fine_bias
 
     # All GCM metrics on the full period (pred_gcm / gcm_on_era5 — 2000-2100)
     vs_gcm: dict = {
@@ -351,6 +359,7 @@ def compute_all_metrics(
         plot_series["cdf"] = {"era5_x": [], "pred_x": []}
 
     plot_series["spectra"] = spec_data
+    plot_series["spectra_full"] = fine_data
 
     return vs_obs, vs_gcm, plot_series
 
@@ -470,14 +479,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{'='*60}")
 
         try:
-            obs = load_era5(era5_dir, variable, start, end)
+            # float64 throughout: float32 sums of 1e4-1e7 values around 300 K or 1e5 Pa
+            # drift (xarray+bottleneck gave a 28e6-element mean of 300 K as 306.78 on JZ).
+            obs = load_era5(era5_dir, variable, start, end).astype("float64")
         except FileNotFoundError as e:
             print(f"  SKIP ERA5: {e}")
             continue
 
         # Load GCM for the full period (2000-2100) — used for all vs-GCM metrics
         try:
-            gcm_full = load_gcm(gcm_dir, variable, start, gcm_end, scenario)
+            gcm_full = load_gcm(gcm_dir, variable, start, gcm_end, scenario).astype("float64")
         except FileNotFoundError as e:
             print(f"  SKIP GCM: {e}")
             continue
@@ -491,12 +502,15 @@ def main(argv: list[str] | None = None) -> int:
 
         # ── Resolve predictions ───────────────────────────────────────────────
         print(f"  {method_label} downscaling ...")
-        if precomputed_preds:
+        if args.pred_dir:
             if variable not in precomputed_preds:
                 print(f"  SKIP: no pre-computed prediction for {variable}")
                 continue
-            pred_full = precomputed_preds[variable]   # full period (2000-2100)
-            all_preds_full[variable] = pred_full
+            # One variable in float64 at a time (France: 6 x 1.1 GB otherwise); the
+            # float32 original is exact, so it is what all_preds_full keeps.
+            pred32 = precomputed_preds.pop(variable)
+            pred_full = pred32.astype("float64")   # full period (2000-2100)
+            all_preds_full[variable] = pred32
 
             # pred_obs: align predictions to ERA5 period for vs-ERA5 metrics
             obs, pred_obs = _align_pair(obs, pred_full)
@@ -512,7 +526,7 @@ def main(argv: list[str] | None = None) -> int:
             obs, gcm_era5_period = _align_pair(obs, gcm_era5_period)
             gcm_metrics_era5 = bicubic_regrid(gcm_era5_period, obs.lat.values, obs.lon.values)
             gcm_metrics_era5 = gcm_metrics_era5.assign_coords(time=obs.time)
-            pred_obs = METHOD_REGISTRY[effective_method](gcm_era5_period, obs, variable)
+            pred_obs = METHOD_REGISTRY[effective_method](gcm_era5_period, obs, variable).astype("float64")
             if effective_method == "bicubic":
                 # Bicubic full-period prediction = bicubic-regridded full GCM (free, already computed)
                 pred_gcm = gcm_on_era5_full
@@ -564,7 +578,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  Computing metrics "
               f"(ERA5: {obs.time.size} steps, GCM: {pred_gcm.time.size} steps) ...")
         vs_obs, vs_gcm, plot_series = compute_all_metrics(
-            obs, pred_obs, gcm_metrics, pred_gcm, n_t)
+            obs, pred_obs, gcm_metrics, pred_gcm, n_t, variable)
         all_metrics[variable]     = {"vs_obs": vs_obs, "vs_gcm": vs_gcm}
         all_plot_series[variable] = plot_series
 
@@ -660,9 +674,9 @@ def main(argv: list[str] | None = None) -> int:
             if variable not in all_preds_full:
                 continue
             try:
-                gcm_full = load_gcm(gcm_dir, variable, start, gcm_end, scenario)
+                gcm_full = load_gcm(gcm_dir, variable, start, gcm_end, scenario).astype("float64")
                 gcm_full_up = bicubic_regrid(gcm_full, _ref_obs.lat.values, _ref_obs.lon.values)
-                pred_full = all_preds_full[variable]
+                pred_full = all_preds_full[variable].astype("float64")
 
                 hist_pred = pred_full.sel(time=pred_full.time.dt.year.isin(range(start, end + 1)))
                 hist_gcm  = gcm_full_up.sel(time=gcm_full_up.time.dt.year.isin(range(start, end + 1)))

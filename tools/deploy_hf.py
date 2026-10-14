@@ -39,7 +39,7 @@ from baselines.labels import is_unpublished  # noqa: E402  (dependency-free)
 REGIONS = ["france", "australia", "us_central"]
 # Published baselines only (no unpublished methods, ablations or *_eval dirs).
 METHODS = {
-    "bicubic", "bcsd", "cdft", "dotc",
+    "bicubic", "eqm", "bcsd", "cdft", "dotc",
     "idownscale", "corrdiff_qm", "cm", "serpentflowclim",
 }
 GCM_DIRS = {"ipsl_cm6a_lr", "cnrm_cm6_1", "cesm2"}

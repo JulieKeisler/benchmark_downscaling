@@ -74,6 +74,6 @@ class TestMethodRegistry:
 
     def test_new_baselines_in_labels(self):
         assert "dotc" in METHOD_LABELS
-        assert METHOD_LABELS["dotc"] == "DOTC"
+        assert METHOD_LABELS["dotc"] == "dOTC"
         assert "cordiff" in METHOD_LABELS
         assert METHOD_LABELS["cordiff"] == "CorDiff"

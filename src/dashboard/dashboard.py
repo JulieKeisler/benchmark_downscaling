@@ -96,7 +96,7 @@ _PIPELINE_HTML = """
   <div style="display:flex; align-items:center; color:#555; font-size:22px; font-weight:bold">→</div>
   <div style="background:#ff7f0e; color:#fff; border-radius:8px; padding:10px 14px; width:190px; text-align:center">
     <div style="font-size:20px; font-weight:bold">Baseline</div>
-    <div style="font-size:12px; opacity:.95">Bicubic · BCSD · CDF-t · DOTC<br>iDownscale · CorrDiff-QM · CM · SerpentFlow-CLIM</div>
+    <div style="font-size:12px; opacity:.95">Bicubic · EQM · BCSD · CDF-t · dOTC<br>iDownscale · CorrDiff-QM · CM · SerpentFlow-CLIM</div>
   </div>
   <div style="display:flex; align-items:center; color:#555; font-size:22px; font-weight:bold">→</div>
   <div style="background:#2ca02c; color:#fff; border-radius:8px; padding:10px 14px; width:180px; text-align:center">
@@ -333,28 +333,37 @@ METHOD_DOCS = {
         "name": "BCSD",
         "type": "Statistical · QM + spatial disaggregation",
         "family": "statistical",
-        "simple": "Monthly quantile mapping at GCM resolution, applied to the GCM's own days as a monthly delta, then fine-scale ERA5 climatological detail added back.",
-        "detailed": "After Wood et al. (2004). Interpolate ERA5 to the GCM grid, fit a per-cell, per-calendar-month empirical quantile map from GCM to ERA5 monthly means over 1980–1999 (20 values per cell-month), apply it to the GCM monthly means, and shift the GCM's own daily values by the monthly correction (additive; multiplicative for pr with the ratio clipped to [0, 5]). The result is cubic-interpolated to the ERA5 grid and the observed fine-scale monthly climatology is added back. The empirical map holds values flat outside the calibration range, so future GCM values beyond the 1980–1999 range are capped — this removes a large part of the warming signal.",
-        "eq": r"\hat{y}_{\mathrm{daily}} = x_{\mathrm{daily}} \times \mathrm{clip}\!\left(\tfrac{\mathrm{bc}_{\mathrm{mon}}}{x_{\mathrm{mon}}},\ 0,\ 5\right)\ \ (\mathrm{pr})",
-        "grading": "Deterministic; designed for climatological correction. Not trend-preserving: it distorts the year-to-year signal and caps the long-term change of every variable whose future values leave the calibration range (e.g. tas).",
+        "simple": "Monthly quantile mapping at GCM resolution, with the GCM's temperature change removed before the map and added back after it, then daily disaggregation and fine-scale ERA5 climatological detail.",
+        "detailed": "Wood et al. (2004). ERA5 is averaged onto the GCM cells, and a per-cell, per-calendar-month empirical quantile map from GCM to ERA5 monthly means is fitted over 1980–1999. For tas, within each 20-year window the GCM's monthly-mean change relative to 1980–1999 is subtracted before the map and re-added after it, so warmer future months are not clamped to the top of the calibration range. The GCM's daily values are then shifted by the monthly correction (additive; multiplicative for pr with the ratio clipped to [0, 5]), interpolated to the ERA5 grid, and the observed fine-scale monthly climatology is added back. Only tas is detrended: the other variables are mapped as in EQM.",
+        "eq": r"\hat{y}^{\,\mathrm{mon}} = Q_{\mathrm{ERA5}}\!\left(F_{\mathrm{GCM,cal}}\!\left(x^{\mathrm{mon}} - \Delta_w\right)\right) + \Delta_w\quad(\mathrm{tas})",
+        "grading": "Deterministic; keeps the tas change; for the other variables, future values beyond the 1980–1999 range are capped by the map.",
+    },
+    "eqm": {
+        "name": "EQM (no detrending)",
+        "type": "Statistical · empirical QM + spatial disaggregation",
+        "family": "statistical",
+        "simple": "The same monthly quantile mapping as BCSD, without removing the GCM's change first: future values beyond the calibration range are held at its edge.",
+        "detailed": "ERA5 is interpolated to the GCM cell centres, a per-cell, per-calendar-month empirical quantile map from GCM to ERA5 monthly means is fitted over 1980–1999 (20 values per cell-month) and applied to the GCM monthly means; the GCM's daily values are shifted by the monthly correction (additive; multiplicative for pr, ratio clipped to [0, 5]), interpolated to the ERA5 grid, and the fine-scale monthly climatology is added back. This was the benchmark's BCSD before Wood et al.'s (2004) detrending step was added; it is kept to show what that step changes.",
+        "eq": r"\hat{y}^{\,\mathrm{mon}} = Q_{\mathrm{ERA5}}\!\left(F_{\mathrm{GCM,cal}}\!\left(x^{\mathrm{mon}}\right)\right)",
+        "grading": "Deterministic; not trend-preserving: it caps the long-term change of every variable whose future values leave the calibration range (e.g. tas).",
     },
     "cdft": {
         "name": "CDF-t",
         "type": "Statistical · empirical CDF transform",
         "family": "statistical",
         "simple": "Per-grid-cell, per-month CDF transform that accounts for the shift of the GCM distribution between the calibration period and each 20-year projection window.",
-        "detailed": "Michelangeli et al. 2009, via SBCK (CDFt, version 2). The GCM historical and scenario runs are bicubic-regridded to the ERA5 grid; for each grid cell and calendar month the calibration-period (1980–1999) GCM and ERA5 CDFs define the transfer, applied to 20-year sliding projection windows (step 10 years, central 10 years kept). Non-negative variables are clipped at zero; no separate wet-day threshold is applied.",
+        "detailed": "Michelangeli et al. 2009, via SBCK (CDFt, version 2). The GCM historical and scenario runs are bicubic-regridded to the ERA5 grid; for each grid cell and calendar month the calibration-period (1980–1999) GCM and ERA5 CDFs define the transfer, applied to 20-year sliding projection windows (step 10 years, central 10 years kept; the GCM is read from 1995 so the first window, 1995–2014, is complete). Non-negative variables are clipped at zero; no separate wet-day threshold is applied.",
         "eq": r"F_{R_f}(x) = F_{R_p}\!\left( F_{G_p}^{-1}\!\left( F_{G_f}(x) \right) \right)",
         "grading": "Deterministic; better for future projections than plain QM.",
     },
     "dotc": {
-        "name": "DOTC",
-        "type": "Statistical · CDF-t with linear detrending",
+        "name": "dOTC",
+        "type": "Statistical · multivariate optimal transport",
         "family": "statistical",
-        "simple": "The CDF-t pipeline applied to linearly detrended series, with the calibration-period GCM slope added back. Despite its label it is univariate — not the multivariate dOTC of Robin et al. (2019).",
-        "detailed": "Same windows and grid as CDF-t (SBCK, per cell and calendar month, 20-year windows, step 10 y). Within each window a linear trend is fitted against the sample index on the 1980–1999 GCM and ERA5 series, removed, CDF-t is applied, and the calibration-period GCM slope is re-added. Because the index restarts in every window, the re-added term acts as a near-constant offset of about twenty years of the 1980–1999 GCM slope rather than the GCM's 2000–2100 trend. Clipping happens before the trend is re-added, so outputs can be slightly negative.",
-        "eq": r"\hat{y} = \mathrm{CDFt}\!\left( x_{\mathrm{det}}\right) + \beta_{G,\,1980\text{–}1999}\,(t - \bar{t}_{\mathrm{cal}})",
-        "grading": "Deterministic; transmits the GCM change like CDF-t, plus a calibration-slope offset.",
+        "simple": "Corrects all variables of a grid cell jointly: the GCM's change between the calibration period and each 20-year window is transported onto the ERA5 calibration distribution, so ERA5's inter-variable dependence is kept and the GCM's change is transferred.",
+        "detailed": "Robin et al. (2019), via SBCK (dOTC, cov_factor = std). Per ERA5 grid cell and calendar month, on the bicubic-regridded GCM, with the same 20-year sliding windows as CDF-t (centre decade kept). Each variable is standardised by the ERA5 1980–1999 mean and sd of that cell and month before the transport, with bins of 0.01 sd. Dry days of pr use SSR (Vrac et al. 2016) at 0.1 mm/day. Cells are corrected independently, so neighbouring cells can draw on different ERA5 days and the fields are less spatially coherent than ERA5. Each fit is seeded, so the output is reproducible. pr, sfcWind, sfcWindmax and rsds are clipped at 0.",
+        "eq": r"\hat{Y}_1 = \mathcal{T}_{X_0 \to Y_0}(X_0) + D\left(\mathcal{T}_{X_0 \to X_1}(X_0) - X_0\right),\quad D = \mathrm{diag}\!\left(\sigma_{Y_0}/\sigma_{X_0}\right)",
+        "grading": "Deterministic (seeded); multivariate per cell; transfers the GCM change rescaled by the ERA5/GCM spread ratio, so the change is not reproduced one-to-one by design.",
     },
     "idownscale": {
         "name": "iDownscale",
@@ -369,28 +378,28 @@ METHOD_DOCS = {
         "name": "CorrDiff-QM",
         "type": "Neural · stochastic residual diffusion",
         "family": "neural",
-        "simple": "A regression U-Net predicts the mean; a DDPM learns the residual distribution around it. The output is the mean of a 10-member ensemble, which shrinks the residual variance.",
-        "detailed": "Mardani et al. 2025 (adapted). Stage 1: plain U-Net predicts the conditional mean from the coarsened ERA5 input + month. Stage 2: a DiffusersUNet denoises the residual with a cosine DDPM (T=1000). Both trained on ERA5 1980–1999. Inference: daily per-cell, per-month empirical quantile mapping of the GCM onto ERA5 on the coarse grid (fit 1980–1999; values outside the calibration range are held flat, so the mapping is not trend-preserving), bicubic upsampling, strided reverse sampling (50 steps), mean of 10 members; pr, sfcWind, sfcWindmax and rsds clipped at 0.",
-        "eq": r"\hat{y}^{\,(n)}_t = \mu_t + r^{(n)}_t",
-        "grading": "Stochastic model, evaluated as a 10-member mean (deterministic in effect, reduced variance).",
+        "simple": "A regression U-Net predicts the mean; a diffusion model adds a random residual around it. One stochastic draw per day is scored, like a single realisation of the weather.",
+        "detailed": "Mardani et al. 2025 (adapted). Stage 1: plain U-Net predicts the conditional mean from the coarsened ERA5 input + month. Stage 2: a DiffusersUNet denoises the residual with a cosine DDPM (T=1000). Both trained on ERA5 1980–1999 until a held-out validation loss stops improving (learning rate halved after 5 epochs without improvement, stop after 15). Inference: daily per-cell, per-month empirical quantile mapping of the GCM onto ERA5 on the coarse grid (fit 1980–1999; values outside the calibration range are held flat, so the mapping is not trend-preserving), bicubic upsampling, strided reverse sampling (50 steps); pr, sfcWind, sfcWindmax and rsds clipped at 0. The scored output is one seeded draw (seed 0); seeds 1–2 are kept to measure the spread.",
+        "eq": r"\hat{y}_t = \mu_t + r_t,\quad r_t \sim p_\theta(r \mid x_t, \mu_t)",
+        "grading": "Stochastic model, scored on a single seeded draw (full variance).",
     },
     "cm": {
         "name": "CM",
         "type": "Neural · consistency model (single-step generative)",
         "family": "neural",
-        "simple": "A consistency model, distilled from a diffusion model trained on ERA5 alone, maps a noised, quantile-delta-mapped GCM field back onto the ERA5 manifold in a single denoising step.",
-        "detailed": "Hess et al. 2025 / Song et al. 2023 (adapted). An EDM score network (DiffusersUNet) is trained on ERA5 1980–1999 (month as the only conditioning; no coarse input), then distilled into a consistency model (EMA teacher, curriculum N 10→150, T_max = 80). Inference: the bicubic-regridded GCM is bias-corrected by quantile delta mapping against ERA5 (GCM historical 1980–1999, per cell and month), noised at t* = 1.0 and projected onto the learned ERA5 manifold with one denoising step. All variables jointly (6; 5 over the central US). One random draw per day.",
+        "simple": "A consistency model, distilled from a diffusion model trained on ERA5 alone, maps a noised, bias-corrected GCM field back onto the ERA5 manifold in a single denoising step. The noise level is set where the GCM and ERA5 spectra cross.",
+        "detailed": "Hess et al. 2025 / Song et al. 2023 (adapted). An EDM score network (DiffusersUNet) is trained on ERA5 1980–1999 (month as the only conditioning; no coarse input), then distilled into a consistency model (EMA teacher, curriculum N 10→150, T_max = 80). Inference: the bicubic-regridded GCM is bias-corrected by quantile delta mapping (Cannon et al. 2015) against ERA5 1980–1999, per cell, calendar month and 20-year moving window (additive; multiplicative for pr and wind), noised at t* and projected onto the learned ERA5 manifold with one denoising step. t* is the median over variables of the noise level at which the GCM and ERA5 power spectra cross (Hann taper, log-spaced wavenumber bins), computed for each region and GCM. All variables jointly (6; 5 with CESM2). The scored output is one seeded draw (seed 0); seeds 1–2 are kept to measure the spread.",
         "eq": r"\hat{y} = f_\theta\!\left( \phi(\mathrm{QDM}(\mathcal{I}(\mathrm{GCM}_t))) + \varepsilon\, t^{*},\ t^{*} \right)",
-        "grading": "Stochastic-generative; one-step (fast); a single unseeded draw.",
+        "grading": "Stochastic-generative; one-step (fast); scored on a single seeded draw. Part of the GCM warming is lost in the denoising step, more with a larger t*.",
     },
     "serpentflowclim": {
         "name": "SerpentFlow-CLIM",
         "type": "Generative · conditional flow matching (climatology-aware)",
         "family": "neural",
-        "simple": "A flow-matching model generates fine fields from a climatology-aware conditioning: the GCM's Fourier low-pass plus a CDF-t-corrected seasonal climatology. An 8-member ODE ensemble is averaged.",
-        "detailed": "Yousef, Keisler & Charantonis (in prep.), building on SerpentFlow. The model is trained on ERA5 only (1980–1999): a Fourier low-pass of ERA5 plus high-frequency noise is mapped to ERA5. At inference the conditioning is the low-pass GCM whose 20-year day-of-year climatology is replaced by a CDF-t-corrected one (calibrated 1980–1999). A UNetFlow (6 variables, 5 over the central US; 4 static channels; day-of-year embedding) integrates an 8-member dopri5 ODE ensemble whose mean is the output; the corrected GCM climatology is re-injected for tas. Non-negative variables are clipped at zero.",
+        "simple": "A flow-matching model generates fine fields from a climatology-aware conditioning: the GCM's Fourier low-pass plus a CDF-t-corrected seasonal climatology. One ODE trajectory is scored.",
+        "detailed": "Yousef, Keisler & Charantonis (in prep.), building on SerpentFlow. The model is trained on ERA5 only (1980–1999): a Fourier low-pass of ERA5 plus high-frequency noise is mapped to ERA5. At inference the conditioning is the low-pass GCM whose 20-year day-of-year climatology is replaced by a CDF-t-corrected one (calibrated 1980–1999). A UNetFlow (6 variables, 5 with CESM2; 4 static channels; day-of-year embedding) integrates a dopri5 ODE from seeded noise; the corrected GCM climatology is re-injected for tas. Non-negative variables are clipped at zero. The scored output is member 1; members 2–3 are kept to measure the spread.",
         "eq": r"\mathcal{L}_{\mathrm{FM}} = \mathbb{E}_{t\sim\mathcal{U}(0,1)}\!\left[\, \left\| v_\theta(\phi_t, t) - u \right\|^2 \,\right]",
-        "grading": "Stochastic-generative; climatology-aware conditioning; evaluated as an 8-member mean (reduced variance).",
+        "grading": "Stochastic-generative; climatology-aware conditioning; scored on a single member (full variance).",
     },
 }
 
@@ -450,6 +459,13 @@ METRIC_DOCS = {
         "simple": "Normalised RMSE between the time-mean isotropic spatial power spectra of predictions and ERA5, restricted to the large scales (wavelengths ≈ 220–1000 km).",
         "detailed": "Radially averaged 2D Fourier power spectra (log-spaced bins in 10⁻⁶–10⁻⁴ cycles/m; grid spacing taken as 0.25° × 111 km without a cos(latitude) factor), averaged over days; the score is RMSE(pred PSD − ERA5 PSD) / mean(ERA5 PSD) over the lowest 30 % of bins only. Despite its name it is not an MAE, and it does not test the fine scales (< ≈200 km) that downscaling adds — it measures whether the large-scale variance is right.",
         "eq": "",
+    },
+    "spectral_fine": {
+        "name": "Fine-scale spectrum",
+        "group": "vs ERA5",
+        "simple": "How far the prediction's spatial power below 200 km is from ERA5's, in orders of magnitude (0 = same power, 0.3 = a factor 2). This is the scale range downscaling is meant to add.",
+        "detailed": "Time-mean 2D power spectra (Hann-tapered, grid spacing in km with cos(latitude)), binned on log-spaced radial wavenumbers from 200 km to the grid's Nyquist wavelength (≈55 km); the score is the mean over bins of |log10(P_pred / P_ERA5)|. Its signed counterpart `spectral_fine_bias` is negative when the prediction is too smooth. Bicubic interpolation of a ≈1.4° GCM sits near 2.7 (≈500× too little fine-scale power).",
+        "eq": r"\overline{\left|\log_{10} P_{pred}(k) - \log_{10} P_{ERA5}(k)\right|}_{\lambda < 200\,\mathrm{km}}",
     },
     "temporal_corr_annual": {
         "name": "Temporal corr annual",
@@ -675,7 +691,8 @@ METHOD_LINKS = {
     "bicubic":     {"pub": "Keys (1981) cubic convolution interpolation (no downscaling paper; standard regridding)", "impl": "src/baselines/inference_bicubic.py"},
     "bcsd":        {"pub": "Wood et al. (2004), Climatic Change 62:189–216", "impl": "src/baselines/inference_bcsd.py"},
     "cdft":        {"pub": "Michelangeli et al. (2009), GRL 36:L11708 — via SBCK (`pip install sbck`)", "impl": "src/baselines/inference_cdft.py"},
-    "dotc":        {"pub": "Benchmark-specific: CDF-t (Michelangeli et al. 2009, via SBCK) with linear detrending — not the multivariate dOTC of Robin et al. (2019), HESS 23:773", "impl": "src/baselines/inference_dotc.py"},
+    "eqm":         {"pub": "Empirical quantile mapping of monthly means (the BCSD of Wood et al. 2004 without its detrending step)", "impl": "src/baselines/inference_bcsd.py --no-detrend"},
+    "dotc":        {"pub": "Robin et al. (2019), HESS 23:773 — via SBCK (`pip install sbck`); SSR for precipitation: Vrac et al. (2016), HESS 20:3651", "impl": "src/baselines/inference_dotc.py"},
     "idownscale":  {"pub": "CERFACS iDownscale EGU26 short course — https://github.com/cerfacs-globc/idownscale/tree/master/docs/egu26_short_course", "impl": "src/baselines/inference_idownscale.py"},
     "corrdiff_qm": {"pub": "Mardani et al. (2025), Communications Earth & Environment 6:124 (arXiv:2309.15214) — CorrDiff residual corrective diffusion", "impl": "src/baselines/inference_corrdiff.py"},
     "cm":          {"pub": "Hess et al. (2025) Nature Machine Intelligence 7:363 — consistency-model downscaling; distills Song et al. (2023) arXiv:2303.01469 — ref. code: https://github.com/p-hss/consistency-climate-downscaling", "impl": "src/baselines/inference_cm.py + train_consistency.py"},
@@ -691,6 +708,7 @@ METRIC_IMPL = {
     "extreme_freq":         "src/metrics/scalar_metrics_era5.py — extreme_freq_bias",
     "extreme_intensity":    "src/metrics/scalar_metrics_era5.py — extreme_intensity_bias",
     "spectral_mae":         "src/metrics/spatial_spectrum_metrics.py — spatial_spectrum_metric",
+    "spectral_fine":        "src/metrics/spatial_spectrum_metrics.py — fine_spectrum_metric",
     "temporal_corr_annual": "src/metrics/scalar_metrics_gcm.py — mean_temporal_corr_annual",
     "temporal_corr":        "src/metrics/scalar_metrics_gcm.py — mean_temporal_corr",
     "annual_anomaly_bias":  "src/metrics/scalar_metrics_gcm.py — annual_anomaly_bias",
@@ -804,7 +822,7 @@ PROTOCOL_PRIMER = (
     "**Our benchmark is NOT a pure perfect-prognosis study** — and that is exactly what "
     "distinguishes it from classic PP (VALUE) and pure-BC (ISIMIP) inter-comparisons. The "
     "baselines are calibrated in their *own* way on the selected GCM: "
-    "bicubic interpolates with no training at all; BCSD, CDF-t and DOTC are "
+    "bicubic interpolates with no training at all; EQM, BCSD, CDF-t and dOTC are "
     "MOS/bias-correction methods fit directly against the GCM historical output (their "
     "calibration *is* GCM-vs-ERA5, not reanalysis-vs-reanalysis); the neural/generative "
     "baselines (CorrDiff-QM, iDownscale, CM, SerpentFlow-CLIM) are hybrids — their networks are "
@@ -874,7 +892,7 @@ OBS_METRICS = [
     "bias_mae", "std_error",
     "ks_full", "ks_q95",
     "seasonal_mae", "extreme_freq", "extreme_intensity",
-    "spectral_mae",
+    "spectral_mae", "spectral_fine",
 ]
 GCM_METRICS = [
     "temporal_corr_annual", "temporal_corr",
@@ -897,6 +915,7 @@ METRIC_LABELS = {
     "extreme_freq":         "Extreme freq bias",
     "extreme_intensity":    "Extreme intensity bias",
     "spectral_mae":         "Spectral MAE (vs ERA5)",
+    "spectral_fine":        "Fine-scale spectrum (vs ERA5)",
     "intervar_corr":        "Inter-var corr MAE (vs ERA5)",
     "temporal_corr_annual": "Temporal corr annual (vs GCM)",
     "temporal_corr":        "Temporal corr daily (vs GCM)",
@@ -1164,10 +1183,10 @@ with tab_welcome:
             "directly but risking distortion of its future signal.\n\n"
             "### The method spectrum\n"
             "Practical methods span the range: pure **interpolation** (bicubic), "
-            "**distribution-based / quantile** methods (BCSD, CDF-t, DOTC), **learned "
+            "**distribution-based / quantile** methods (EQM, BCSD, CDF-t, dOTC), **learned "
             "regression** methods (iDownscale), and **generative** methods "
             "(CorrDiff, consistency models, SerpentFlow-CLIM). The `Methods` tab documents "
-            "the eight baselines used here. Crucially, **our benchmark is not a pure "
+            "the nine baselines used here. Crucially, **our benchmark is not a pure "
             "perfect-prognosis study** — the "
             "baselines are calibrated in their *own* way on the selected GCM, and "
             "[7. Why not pure perfect prognosis](#ww-sec7) explains why this matters when "
@@ -1239,7 +1258,7 @@ with tab_welcome:
             "|---|---|\n"
             f"| **Region box** | {_wl_region} — 57×65 cells at ≈0.25° |\n"
             f"| **Reference** | ERA5 pseudo-observations; daily {_wl_era5} |\n"
-            f"| **GCM** | {_wl_gcm}; daily; IPSL-CM6A-LR & CNRM-CM6-1 under SSP3-7.0, CESM2 under SSP2-4.5 |\n"
+            f"| **GCM** | {_wl_gcm}; daily; IPSL-CM6A-LR & CNRM-CM6-1 under SSP3-7.0, CESM2 under SSP2-4.5; one run per GCM, the same for historical and scenario (r1i1p1f1, r1i1p1f2, r4i1p1f1) |\n"
             "| **Calibration** | 1980–1999 — distribution baselines fit on the selected GCM; neural baselines trained on ERA5, with a GCM-vs-ERA5 pre-correction at inference |\n"
             "| **Accuracy evaluation** | 2000–2020 vs ERA5 |\n"
             "| **Fidelity evaluation** | 2000–2100 vs the GCM; Δ-signal 2040–2060 & 2080–2100 |\n"
@@ -1293,11 +1312,10 @@ with tab_welcome:
             st.caption(
                 "Climatological mean bias (Prediction − ERA5) for three baselines, with "
                 "coastlines. Bicubic merely interpolates the GCM, so its systematic "
-                "cold/warm biases survive. The distribution-based (DOTC) and generative "
-                "(CM) baselines explicitly correct against ERA5 and remove most of it. The "
-                "effect is large: over France (2000–2020), the temperature bias-MAE vs ERA5 "
-                "is 0.88 K for bicubic against 0.12 K for the best-corrected baseline; for "
-                "10-m wind it is 0.66 vs 0.08 m/s. The "
+                "cold/warm biases survive. The distribution-based and generative "
+                "baselines explicitly correct against ERA5 and remove most of it (this "
+                "figure comes from the first version of the benchmark; its distribution-based "
+                "panel is an earlier CDF-t variant). The "
                 "bias that remains is exactly what the accuracy metrics on the other tabs "
                 "quantify — and it is precisely the kind of error that feeds straight into a "
                 "power-system model's demand forecasts."
@@ -1423,7 +1441,7 @@ with tab_welcome:
         m_detailed = st.toggle("Show detailed documentation (equations, hyperparameters)", key="welcome_methods_detailed")
         if IMG_METHOD_SPECTRUM.exists():
             st.image(str(IMG_METHOD_SPECTRUM), width="stretch")
-        for m in ["bicubic", "bcsd", "cdft", "dotc", "idownscale", "corrdiff_qm", "cm", "serpentflowclim"]:
+        for m in ["bicubic", "eqm", "bcsd", "cdft", "dotc", "idownscale", "corrdiff_qm", "cm", "serpentflowclim"]:
             doc = METHOD_DOCS[m]
             link = METHOD_LINKS.get(m, {})
             links_md = ""

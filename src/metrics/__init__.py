@@ -9,7 +9,7 @@ from .scalar_metrics_gcm import (
     delta_change_score,
 )
 from .inter_variables_metrics import intervar_corr_mae
-from .spatial_spectrum_metrics import spatial_spectrum_metric
+from .spatial_spectrum_metrics import spatial_spectrum_metric, fine_spectrum_metric
 
 __all__ = [
     "bias", "clim_rmse", "spatial_mean_abs_bias", "std_error",
@@ -19,5 +19,6 @@ __all__ = [
     "lag1_autocorr", "lag1_autocorr_mae", "annual_anomaly_bias",
     "intervar_corr_mae",
     "spatial_spectrum_metric",
+    "fine_spectrum_metric",
     "delta_change_score",
 ]

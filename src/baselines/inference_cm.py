@@ -7,11 +7,15 @@ to downscale GCM fields to the ERA5 grid for the full eval period (2000-2100).
 Stroke guidance: add Gaussian noise at stroke_time to the upsampled GCM,
 then apply a single consistency-model denoising step (one-step generation).
 
+t* is taken from the PSD sweep (src/evaluation/psd_sweep.py, --stroke-time-json)
+when given; each run is one seeded draw.
+
 Output is saved in the standard predictions.pt format.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -28,8 +32,9 @@ from utils import (
     neural_predict, month_channels, EMA,
 )
 from data_processing import (
-    load_era5, load_gcm, bicubic_regrid, align_time, save_predictions, qdm_correct,
+    load_era5, load_gcm, bicubic_regrid, align_time, save_predictions, qdm_windowed,
 )
+from inference_cdft import _sliding_windows
 
 VARIABLES = ["tas", "pr", "sfcWind", "sfcWindmax", "psl"]
 N_VARS    = len(VARIABLES)
@@ -65,8 +70,11 @@ def run(
     stroke_time: float = 0.5,
     n_members:   int   = 1,
     batch_size:  int   = 32,
+    seed:        int   = 0,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     device    = "cuda" if torch.cuda.is_available() else "cpu"
     ckpt_path = ckpt_dir / "best.pt"
     if not ckpt_path.exists():
@@ -89,27 +97,35 @@ def run(
     target_lat = ref_v.lat.values
     target_lon = ref_v.lon.values
 
-    print(f"  [CM] loading GCM {eval_start}–{eval_end} ...", flush=True)
-    gcm_eval = align_time({v: load_gcm(gcm_dir, v, eval_start, eval_end, scenario)
+    # QDM in 20-y moving windows (Cannon et al. 2015; contract §C): the GCM is
+    # read from eval_start - 5 so the first window (e.g. 1995-2014) is full.
+    windows = _sliding_windows(eval_start, eval_end, 20, 10, 5)
+    load_start = min(w[0] for w in windows)
+    print(f"  [CM] loading GCM {load_start}–{eval_end} ...", flush=True)
+    gcm_eval = align_time({v: load_gcm(gcm_dir, v, load_start, eval_end, scenario)
                             for v in VARIABLES})
-    gcm_time = next(iter(gcm_eval.values())).time
-    T, H, W  = gcm_time.size, len(target_lat), len(target_lon)
 
-    print("  [CM] bicubic regrid + QDM + normalize ...", flush=True)
-    x_in_norm = np.empty((T, N_VARS, H, W), dtype=np.float32)
+    print("  [CM] bicubic regrid + windowed QDM + normalize ...", flush=True)
+    x_in_norm, gcm_time = None, None
     for i, var in enumerate(VARIABLES):
         # 1. Bicubic regrid to ERA5 grid (calibration GCM and eval GCM)
         gcm_cal_up  = bicubic_regrid(gcm_cal[var],  target_lat, target_lon)
         era5_cal_up = era5_cal[var]   # already at ERA5 grid
         gcm_eval_up = bicubic_regrid(gcm_eval[var], target_lat, target_lon)
-        # 2. QDM at ERA5 grid resolution (per cell, per calendar month)
-        gcm_qdm     = qdm_correct(gcm_eval_up, gcm_cal_up, era5_cal_up, var)
+        # 2. QDM per cell, calendar month and window; keeps eval_start..eval_end
+        gcm_qdm     = qdm_windowed(gcm_eval_up, gcm_cal_up, era5_cal_up, var, windows)
+        if x_in_norm is None:
+            gcm_time = gcm_qdm.time
+            x_in_norm = np.empty((gcm_time.size, N_VARS, len(target_lat), len(target_lon)),
+                                 dtype=np.float32)
         x_in_norm[:, i] = encode(gcm_qdm.values.astype(np.float32), stats, var)
+    T, H, W = gcm_time.size, len(target_lat), len(target_lon)
 
     months = gcm_time.dt.month.values.astype(np.float32)
     mc     = month_channels(months, (T, H, W))
 
-    print(f"  [CM] stroke guidance (t*={stroke_time}, members={n_members}) ...", flush=True)
+    print(f"  [CM] stroke guidance (t*={stroke_time:.4f}, members={n_members}, "
+          f"seed={seed}) ...", flush=True)
     pred_norm = neural_predict(MODE, model, x_in_norm, mc, device,
                                stroke_time=stroke_time, n_members=n_members,
                                n_vars=N_VARS, batch_size=batch_size)
@@ -139,6 +155,9 @@ def main():
     p.add_argument("--eval-end",       type=int, default=2100)
     p.add_argument("--scenario",       default="ssp370")
     p.add_argument("--stroke-time",    type=float, default=1.0)
+    p.add_argument("--stroke-time-json", default=None,
+                   help="psd_sweep.py output; its t_star overrides --stroke-time")
+    p.add_argument("--seed",           type=int,   default=0)
     p.add_argument("--n-members",      type=int,   default=1)
     p.add_argument("--batch-size",     type=int,   default=32)
     p.add_argument("--variables",      nargs="+",  default=None,
@@ -148,6 +167,14 @@ def main():
     if args.variables:
         VARIABLES = list(args.variables)
         N_VARS    = len(VARIABLES)
+    stroke_time = args.stroke_time
+    if args.stroke_time_json:
+        import hashlib  # noqa: PLC0415
+        sweep = json.loads(Path(args.stroke_time_json).read_text())
+        sha = hashlib.sha256((Path(args.checkpoint_dir) / "best.pt").read_bytes()).hexdigest()
+        if sweep.get("checkpoint_sha256") != sha:
+            raise SystemExit("t* was swept on another checkpoint (normalisation differs)")
+        stroke_time = float(sweep["t_star"])
     run(
         era5_dir    = Path(args.era5_dir),
         gcm_dir     = Path(args.gcm_dir),
@@ -157,9 +184,10 @@ def main():
         eval_start  = args.eval_start,
         eval_end    = args.eval_end,
         scenario    = args.scenario,
-        stroke_time = args.stroke_time,
+        stroke_time = stroke_time,
         n_members   = args.n_members,
         batch_size  = args.batch_size,
+        seed        = args.seed,
     )
 
 

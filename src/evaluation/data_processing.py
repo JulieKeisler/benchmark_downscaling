@@ -54,6 +54,38 @@ def _rename_coords(ds: xr.Dataset) -> xr.Dataset:
     return ds.rename(renames) if renames else ds
 
 
+def _lon_to_180(ds: xr.Dataset) -> xr.Dataset:
+    # ERA5 crops use -180..180; a 0..360 GCM crop would otherwise be placed by
+    # index and collapse onto one column in bicubic_regrid (contract §E1).
+    if "lon" in ds.coords and float(ds.lon.max()) > 180.0:
+        ds = ds.assign_coords(lon=((ds.lon + 180.0) % 360.0) - 180.0).sortby("lon")
+    return ds
+
+
+def check_same_member(files: list[Path]) -> str | None:
+    """Raise if the files of one GCM variable come from different realisations.
+
+    Contract §E2: an r1 historical spliced to an r4 scenario changes every
+    2000-2020 and future-change number. Files without a variant_label (derived
+    products) are skipped. Returns the common label.
+    """
+    labels = {}
+    for f in files:
+        with xr.open_dataset(f, decode_times=False) as ds:
+            lab = ds.attrs.get("variant_label")
+            var = f.name.split("_")[0]
+            if lab is None and var in ds:      # some downloads label the variable, not the file
+                lab = ds[var].attrs.get("variant_label")
+        labels[f.name] = lab
+    known = {k: v for k, v in labels.items() if v is not None}
+    if len(set(known.values())) > 1:
+        raise ValueError(f"GCM files mix realisations: {labels}")
+    if known and len(known) < len(labels):
+        raise ValueError(f"GCM files mix labelled and unlabelled realisations: {labels}")
+    labels = known
+    return next(iter(labels.values()), None)
+
+
 # ── Data loading ──────────────────────────────────────────────────────────────
 
 def load_era5(era5_dir: Path, variable: str, start: int, end: int) -> xr.DataArray:
@@ -77,12 +109,13 @@ def load_gcm(gcm_dir: Path, variable: str, start: int, end: int,
         gcm_dir / f"{variable}_historical_1960-2014.nc",
         gcm_dir / f"{variable}_{scenario}_2015-2100.nc",
     ]
+    check_same_member([f for f in candidates if f.exists()])
     das = []
     for f in candidates:
         if not f.exists():
             continue
         ds = xr.open_dataset(f, use_cftime=True)
-        ds = _rename_coords(ds)
+        ds = _lon_to_180(_rename_coords(ds))
         da = ds[variable].sel(time=slice(f"{start}-01-01", f"{end}-12-31"))
         if da.sizes["time"] > 0:
             das.append(da)
@@ -158,6 +191,20 @@ def bicubic_regrid(
     W_t  = len(target_lon)
     dlat = src_lat[1] - src_lat[0]
     dlon = src_lon[1] - src_lon[0]
+    # The index arithmetic below assumes uniform spacing (Gaussian grids are
+    # uniform to ~1e-6 over our crops); refuse anything coarser than 1 %.
+    for name, src in (("lat", src_lat), ("lon", src_lon)):
+        dv = np.diff(src)
+        if np.abs(dv / dv.mean() - 1.0).max() > 0.01:
+            raise ValueError(f"bicubic_regrid: source {name} spacing is not uniform")
+    # Contract §E1: the source grid must cover the target (to one source cell);
+    # mismatched lon conventions otherwise give a silent one-column field.
+    for name, src, tgt, d in (("lat", src_lat, target_lat, dlat),
+                              ("lon", src_lon, target_lon, dlon)):
+        if (src.min() > tgt.min() + abs(d)) or (src.max() < tgt.max() - abs(d)):
+            raise ValueError(
+                f"bicubic_regrid: source {name} [{src.min():.2f}, {src.max():.2f}] "
+                f"does not cover target [{tgt.min():.2f}, {tgt.max():.2f}]")
 
     offsets = np.array([-1, 0, 1, 2])
 
@@ -280,6 +327,72 @@ def qdm_correct(
 
 
 # ── Tensor utilities ──────────────────────────────────────────────────────────
+
+def _quantile_at(sorted_cols: np.ndarray, tau: np.ndarray) -> np.ndarray:
+    # Linear-interpolated quantile of each sorted column [n, C] at probabilities tau [m, C].
+    pos = tau * (sorted_cols.shape[0] - 1)
+    lo = np.floor(pos).astype(int)
+    hi = np.minimum(lo + 1, sorted_cols.shape[0] - 1)
+    w = pos - lo
+    return (np.take_along_axis(sorted_cols, lo, 0) * (1.0 - w)
+            + np.take_along_axis(sorted_cols, hi, 0) * w)
+
+
+def qdm_windowed(
+    gcm_proj:  xr.DataArray,
+    gcm_hist:  xr.DataArray,
+    era5_hist: xr.DataArray,
+    variable:  str,
+    windows:   list[tuple[int, int, int, int]],
+) -> xr.DataArray:
+    """Quantile delta mapping (Cannon et al. 2015) in moving projection windows.
+
+    Per cell, calendar month and window (win_start, win_end, keep_start,
+    keep_end), each GCM value x gets its quantile tau in the window's own GCM
+    distribution; the GCM change at that quantile is added to (or, for pr and
+    wind, multiplies) the ERA5 1980-1999 value at tau:
+        additive        y = Q_era5(tau) + (x - Q_gcm_hist(tau))
+        multiplicative  y = Q_era5(tau) * clip(x / Q_gcm_hist(tau), 0, 10)
+    Only the centre years of each window are kept. A single projection window
+    over 2000-2100 would map late-century days through the upper tail of the
+    bias and lose part of the warming (Australia tas: 0.94 kept, against 1.00
+    with 20-year windows). All inputs on the same grid; returns float32 for
+    the years covered by the keep ranges.
+    """
+    multiplicative = variable in _MULT_VARS
+    eps = 1e-6
+    x_all = gcm_proj.values.astype(np.float64)
+    T, H, W = x_all.shape
+    x_all = x_all.reshape(T, H * W)
+    h_all = gcm_hist.values.astype(np.float64).reshape(-1, H * W)
+    o_all = era5_hist.values.astype(np.float64).reshape(-1, H * W)
+    m_p = gcm_proj.time.dt.month.values
+    y_p = gcm_proj.time.dt.year.values
+    m_h = gcm_hist.time.dt.month.values
+    m_o = era5_hist.time.dt.month.values
+    out = np.full_like(x_all, np.nan)
+    for m in range(1, 13):
+        Sh = np.sort(h_all[m_h == m], axis=0)
+        So = np.sort(o_all[m_o == m], axis=0)
+        for ws, we, ks, ke in windows:
+            win = (m_p == m) & (y_p >= ws) & (y_p <= we)
+            if not win.any():
+                continue
+            xw = x_all[win]
+            tau = (np.argsort(np.argsort(xw, axis=0), axis=0) + 0.5) / xw.shape[0]
+            qh, qo = _quantile_at(Sh, tau), _quantile_at(So, tau)
+            if multiplicative:
+                yw = qo * np.clip(xw / np.maximum(qh, eps), 0.0, 10.0)
+            else:
+                yw = qo + (xw - qh)
+            idx = np.flatnonzero(win)
+            keep = (y_p[idx] >= ks) & (y_p[idx] <= ke)
+            out[idx[keep]] = yw[keep]
+    covered = ~np.isnan(out).any(axis=1)
+    res = xr.DataArray(out.reshape(T, H, W).astype(np.float32), dims=gcm_proj.dims,
+                       coords=gcm_proj.coords)
+    return res.isel(time=np.flatnonzero(covered))
+
 
 def align_time(das: dict[str, xr.DataArray]) -> dict[str, xr.DataArray]:
     """Subset each DataArray to the common date intersection.

@@ -4,11 +4,22 @@
 
 bicubic: {}   # stateless — no hyperparameters
 
-bcsd: {}      # stateless — fits distribution per month/cell at inference time
+bcsd:         # Wood et al. (2002, 2004): monthly-mean QM per GCM cell on ERA5 area-averaged
+  detrend: tas # to the GCM grid; tas trend (window-mean change) removed before the map, re-added after
+  win_size: 20
+  step: 10
+  trim: 5
 
-cdft: {}      # stateless — bicubic upsample then per-cell monthly QM at ERA5 resolution
+eqm:          # the v1 "BCSD" (inference_bcsd.py --no-detrend): point-interpolated ERA5 target,
+  detrend: none  # no detrending, so the map is flat beyond the 1980-1999 range (loses warming)
 
-dotc:
+cdft:         # SBCK.CDFt v2 per variable, cell and month on the bicubic GCM; sliding windows
+  win_size: 20
+  step: 10
+  trim: 5
+
+dotc:                # SBCK.dOTC (Robin et al. 2019) jointly over all variables, per cell and month;
+  cov_factor: std    # SSR for pr zeros (Vrac et al. 2016); seeded per (cell, month, window)
   win_size: 20       # sliding window size for temporal trend estimation (years)
   step: 10           # sliding window step (years)
   trim: 5            # sliding window trim margin (years)
@@ -20,14 +31,15 @@ idownscale:   # CERFACS U-Net perfect-prognosis downscaling (Soares et al. 2024)
   # (vs ERA5 coarsened) before bicubic upsampling to the ERA5 fine grid.
 
 consistency:
-  stroke_time: 5.0   # PSD-calibrated t* (Hess et al.); higher = more stochastic
-  n_members: 1       # stochastic draws to average (trade speed for diversity)
+  stroke_time: psd_sweep  # t* from src/evaluation/psd_sweep.py per region (--stroke-time-json);
+                          # v1 runs used a hand-set 1.0
+  n_members: 1       # one draw per run; seeds 0, 1, 2 for spread
   batch_size: 16     # inference batch size; reduce if GPU OOM
 
 corrdiff_qm:
-  n_members: 10      # stochastic residual-diffusion draws averaged per field
+  n_members: 1       # one draw per run (seeds 0, 1, 2); v1 averaged 10 draws
   sample_steps: 50   # strided DDPM reverse steps (few-step sampling)
-  epochs: 5          # training epochs on ERA5 (both stages)
+  epochs: 300        # maximum per stage; early stopping (patience 15) on 1998-1999 (--val-days 730)
   batch_size: 16     # training batch size
   # Inference: QM maps GCM coarse predictor → ERA5 coarse predictor (per cell,
   # per calendar month), calibrated on the historical holdout only.

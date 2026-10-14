@@ -162,3 +162,31 @@ class TestSavePredictions:
         result = load_predictions(tmp_path, variables)
 
         np.testing.assert_allclose(result["tas"].values, 273.15, atol=1e-4)
+
+
+class TestQDMWindowed:
+    """qdm_windowed transmits a GCM trend exactly and removes a constant bias."""
+
+    def test_trend_kept_and_bias_removed(self):
+        import numpy as np
+        import xarray as xr
+        from data_processing import qdm_windowed
+        rng = np.random.default_rng(0)
+        def series(start, end, offset, trend):
+            t = xr.date_range(f"{start}-01-01", f"{end}-12-31", freq="D")
+            yrs = t.year.values - 2000
+            v = 280 + offset + trend * yrs[:, None, None] + rng.standard_normal((len(t), 3, 4))
+            return xr.DataArray(v, dims=("time", "lat", "lon"), coords={"time": t})
+        hist = series(1980, 1999, 2.0, 0.0)          # GCM 2 K too warm, no trend
+        era5 = series(1980, 1999, 0.0, 0.0)
+        proj = series(1995, 2100, 2.0, 0.05)          # +5 K per century
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "baselines"))
+        from inference_cdft import _sliding_windows
+        out = qdm_windowed(proj, hist, era5, "tas", _sliding_windows(2000, 2100, 20, 10, 5))
+        assert str(out.time.values[0])[:4] == "2000" and str(out.time.values[-1])[:4] == "2100"
+        early = out.sel(time=slice("2000", "2020")).mean().item()
+        late = out.sel(time=slice("2080", "2100")).mean().item()
+        g = proj.sel(time=slice("2080", "2100")).mean().item() - proj.sel(time=slice("2000", "2020")).mean().item()
+        assert abs((late - early) / g - 1) < 0.02
+        assert abs(out.sel(time=slice("2000", "2009")).mean().item() - 280.25) < 0.15

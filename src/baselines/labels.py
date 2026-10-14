@@ -8,8 +8,9 @@ dashboard can import it without pulling in the whole registry — see
 METHOD_LABELS: dict[str, str] = {
     "bicubic":            "Bicubic",
     "bcsd":               "BCSD",
+    "eqm":                "EQM (no detrending)",
     "cdft":               "CDF-t",
-    "dotc":               "DOTC",
+    "dotc":               "dOTC",
     "corrdiff_qm":        "CorrDiff-QM",
     "cordiff":            "CorDiff",
     "idownscale":         "iDownscale",

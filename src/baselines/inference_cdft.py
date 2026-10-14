@@ -132,13 +132,16 @@ def _sliding_windows(eval_start: int, eval_end: int,
 def _cdft_field_sliding(gcm_calib: xr.DataArray, obs_calib: xr.DataArray,
                          gcm_eval: xr.DataArray, variable: str,
                          win_size: int = 20, step: int = 10, trim: int = 5,
+                         eval_start: int | None = None,
                          ) -> xr.DataArray:
     """CDF-t with sliding windows over the evaluation period.
 
     Each 20-year window is corrected independently; only the central 10 years
-    of each corrected window are kept and concatenated.
+    of each corrected window are kept and concatenated. gcm_eval may start
+    `trim` years before eval_start so that the first window is full.
     """
-    eval_start = int(gcm_eval.time.dt.year.values.min())
+    if eval_start is None:
+        eval_start = int(gcm_eval.time.dt.year.values.min())
     eval_end   = int(gcm_eval.time.dt.year.values.max())
 
     windows = _sliding_windows(eval_start, eval_end, win_size, step, trim)
@@ -204,7 +207,8 @@ def run(era5_dir: Path, gcm_dir: Path, out_dir: Path,
         print(f"  Loading {var} ...", flush=True)
         era5_calib[var] = load_era5(era5_dir, var, calib_start, calib_end)
         gcm_calib[var]  = load_gcm(gcm_dir, var, calib_start, calib_end, "historical")
-        gcm_eval[var]   = load_gcm(gcm_dir, var, eval_start,  eval_end,   scenario)
+        # From eval_start - trim, so the first window (e.g. 1995-2014) is full.
+        gcm_eval[var]   = load_gcm(gcm_dir, var, eval_start - trim, eval_end, scenario)
 
     all_calib = {f"era5_{v}": era5_calib[v] for v in variables}
     all_calib.update({f"gcm_{v}": gcm_calib[v] for v in variables})
@@ -225,7 +229,9 @@ def run(era5_dir: Path, gcm_dir: Path, out_dir: Path,
         gc_e = gc_e.assign_coords(time=gcm_eval[var].time)
 
         corrected = _cdft_field_sliding(gc_c, era5_calib[var], gc_e, var,
-                                         win_size=win_size, step=step, trim=trim)
+                                         win_size=win_size, step=step, trim=trim,
+                                         eval_start=eval_start)
+        corrected = corrected.isel(time=corrected.time.dt.year.values >= eval_start)
         if ref_da is None:
             ref_da = corrected
         arrays.append(torch.tensor(corrected.values, dtype=torch.float32))

@@ -255,3 +255,32 @@ class TestSpatialSpectrumMetrics:
         score, plot_data = spatial_spectrum_metric(obs, pred)
         assert isinstance(score, float)
         assert "k_centers_km" in plot_data
+
+
+class TestFineSpectrum:
+    """fine_spectrum_metric: 0 for identical fields, negative bias when smoothed."""
+
+    def _field(self, smooth: bool = False):
+        import numpy as np
+        import xarray as xr
+        from scipy.ndimage import uniform_filter
+        rng = np.random.default_rng(0)
+        x = rng.standard_normal((30, 57, 65)).astype(np.float32)
+        if smooth:
+            x = uniform_filter(x, size=(1, 7, 7))
+        return xr.DataArray(x, dims=("time", "lat", "lon"),
+                            coords={"time": np.arange(30),
+                                    "lat": np.arange(55.0, 40.75, -0.25),
+                                    "lon": np.arange(-6.0, 10.25, 0.25)})
+
+    def test_identical_is_zero(self):
+        from metrics import fine_spectrum_metric
+        f = self._field()
+        score, bias, data = fine_spectrum_metric(f, f)
+        assert score == 0.0 and bias == 0.0
+        assert min(data["wavelength_km"]) < 60 and max(data["wavelength_km"]) > 500
+
+    def test_smoothed_is_negative(self):
+        from metrics import fine_spectrum_metric
+        score, bias, _ = fine_spectrum_metric(self._field(), self._field(smooth=True))
+        assert bias < -0.5 and score == -bias

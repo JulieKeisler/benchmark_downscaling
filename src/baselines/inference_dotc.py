@@ -1,265 +1,216 @@
 #!/usr/bin/env python3
-"""DOTC (Distribution of Trends Correction) baseline inference using SBCK.
+"""dOTC baseline — multivariate dynamical optimal-transport correction (SBCK.dOTC).
 
-DOTC (Vrac et al. 2012) preserves the GCM's forced trend while correcting the distribution:
-    1. Fit linear trend over calibration period for both GCM and ERA5
-    2. Detrend: x' = x - trend * (year - ref_year)
-    3. Apply CDF-t (SBCK) to detrended values
-    4. Re-add the original GCM trend: x_bc = x'_bc + trend_GCM * (year - ref_year)
+dOTC (Robin et al. 2019, HESS 23:773) corrects all variables jointly. For each
+ERA5 grid cell and calendar month it transports the GCM's evolution between the
+calibration period (X0) and a projection window (X1) onto the ERA5 calibration
+distribution (Y0), so the inter-variable dependence of ERA5 is kept and the
+GCM's change is transferred (cov_factor="std" rescales the change by the
+ERA5/GCM spread ratio).
 
-Applied month-by-month per grid cell with sliding window over evaluation period.
+Pipeline:
+    1. Bicubic-regrid the GCM (calibration and evaluation) to the ERA5 grid.
+    2. Per cell and calendar month, fit SBCK.dOTC on (Y0=ERA5 1980-1999,
+       X0=GCM 1980-1999, X1=GCM window) for every 20-year sliding window, and
+       keep the centre decade of each window (same windows as CDF-t).
+    3. Each variable is standardised by the ERA5 calibration mean and sd of
+       that cell and month before the transport (the OT cost is a Euclidean
+       distance: in physical units psl in Pa decides every match; on test
+       cells the output then correlates 0.41 with the GCM day for tas), with
+       bins of 0.01 sd so outputs stay close to the transported values.
+    4. Precipitation dry days use SSR (Vrac et al. 2016) at 0.1 mm/day
+       (Julie, 2026-10-13): values <= 0.1 are replaced by uniform draws in
+       (0.001, 0.1) before the transport and outputs <= 0.1 are set to 0.
+       Calibration-only split (fit 1980-89, test 1990-99, Australia): pr KS
+       0.22 against 0.32 with SBCK's default threshold.
+    5. pr, sfcWind, sfcWindmax and rsds are clipped at 0 after correction.
 
-Requires: pip install sbck
+Cells are corrected independently, jointly across variables (Julie,
+2026-10-13), so neighbouring cells can draw on different ERA5 days: the
+fields are less spatially coherent than ERA5, which the spatial metrics show.
+
+dOTC samples inside its histogram bins, so each fit is seeded from
+(cell, month, window) and the output is reproducible.
 
 Usage:
     python inference_dotc.py \
-        --era5-dir /path/to/era5 \
-        --gcm-dir  /path/to/cmip6/ipsl_cm6a_lr \
-        --out-dir  results/dotc \
-        --calib-start 1980 --calib-end 1999 \
-        --eval-start  2000 --eval-end  2100
+        --era5-dir /path/to/era5 --gcm-dir /path/to/cmip6/ipsl_cm6a_lr \
+        --out-dir results/dotc --calib-start 1980 --calib-end 1999 \
+        --eval-start 2000 --eval-end 2100 --workers 64
 """
 from __future__ import annotations
 
 import argparse
+import multiprocessing as mp
+import os
 import sys
+import time
+import warnings
 from pathlib import Path
 
 import numpy as np
 import xarray as xr
 
-try:
-    from tqdm import tqdm
-except ImportError:
-    def tqdm(it, **_):
-        return it
+_HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_HERE.parent / "evaluation"))
 
-try:
-    import SBCK
-except ImportError:
-    SBCK = None  # guarded inside _cdft_apply; fails there, not at import time
+from inference_cdft import _sliding_windows  # noqa: E402
 
-# Physical lower bounds applied after correction
-CLIP_MIN: dict[str, float] = {
-    "pr":         0.0,
-    "sfcWind":    0.0,
-    "sfcWindmax": 0.0,
-    "rsds":       0.0,
-}
+CLIP_MIN: dict[str, float] = {"pr": 0.0, "sfcWind": 0.0, "sfcWindmax": 0.0, "rsds": 0.0}
+PR_DRY = 0.1      # mm/day: SSR threshold for precipitation (contract §C)
+BIN_WIDTH = 0.01  # dOTC histogram bin width in ERA5 standard deviations
+
+# Filled before the pool forks; workers read them copy-on-write.
+_G: dict = {}
 
 
-# ── Core CDF-t (SBCK) ─────────────────────────────────────────────────────────
+def _dotc_fit_predict(Y0: np.ndarray, X0: np.ndarray, X1: np.ndarray,
+                      pr_col: int | None, seed: int) -> np.ndarray:
+    """One dOTC correction: Y0/X0 [n0, V] calibration, X1 [n1, V] window → [n1, V].
 
-def _cdft_apply(gp: np.ndarray, obs: np.ndarray, gf: np.ndarray,
-                clip_min: float | None = None) -> np.ndarray:
-    """CDF-t for one grid cell, one calendar month — delegates to SBCK.CDFt.
-
-    gp:  GCM calibration values  [n_calib]
-    obs: ERA5 calibration values  [n_calib]
-    gf:  GCM evaluation values   [n_eval]
-
-    Uses version=2 with normalize_cdf=True (SBCK defaults).
+    SSR on pr at PR_DRY, then every variable standardised by the ERA5 (Y0)
+    mean and sd, transported with SBCK.dOTC, and mapped back.
     """
-    if SBCK is None:
-        raise ImportError("SBCK is required: pip install sbck")
-    bc = SBCK.CDFt(version=2, normalize_cdf=True)
-    bc.fit(obs.reshape(-1, 1), gp.reshape(-1, 1), gf.reshape(-1, 1))
-    out = np.asarray(bc.predict(gf.reshape(-1, 1)), dtype=np.float32).ravel()
-    if clip_min is not None:
-        out = np.maximum(out, clip_min)
+    import SBCK  # noqa: PLC0415 — heavy optional dependency
+    np.random.seed(seed)                      # SBCK draws from the global RNG
+    rng = np.random.default_rng(seed)
+    Y0, X0, X1 = (np.asarray(a, dtype=np.float64).copy() for a in (Y0, X0, X1))
+    if pr_col is not None:
+        for A in (Y0, X0, X1):
+            dry = A[:, pr_col] <= PR_DRY
+            A[dry, pr_col] = rng.uniform(PR_DRY / 100, PR_DRY, int(dry.sum()))
+    mu, sd = Y0.mean(0), Y0.std(0)
+    sd = np.where(sd > 0, sd, 1.0)
+    bc = SBCK.dOTC(bin_width=np.full(Y0.shape[1], BIN_WIDTH))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        bc.fit((Y0 - mu) / sd, (X0 - mu) / sd, (X1 - mu) / sd)
+        Z = np.asarray(bc.predict((X1 - mu) / sd)) * sd + mu
+    if pr_col is not None:
+        Z[:, pr_col] = np.where(Z[:, pr_col] > PR_DRY, Z[:, pr_col], 0.0)
+    return Z.astype(np.float32)
+
+
+def _correct_row(i: int) -> np.ndarray:
+    """dOTC for every cell of ERA5 row i, every month and window → [T_eval, V, W]."""
+    obs, gcm_c, gcm_e = _G["obs"], _G["gcm_c"], _G["gcm_e"]
+    cal_mon, ev_mon, ev_yr = _G["cal_mon"], _G["ev_mon"], _G["ev_yr"]
+    windows, pr_col = _G["windows"], _G["pr_col"]
+    T_e, V, _, W = gcm_e.shape
+    out = np.full((T_e, V, W), np.nan, dtype=np.float32)
+    for j in range(W):
+        for m in range(1, 13):
+            c_sel = cal_mon == m
+            Y0 = obs[c_sel, :, i, j]
+            X0 = gcm_c[c_sel, :, i, j]
+            for w, (win_start, win_end, keep_start, keep_end) in enumerate(windows):
+                win = (ev_mon == m) & (ev_yr >= win_start) & (ev_yr <= win_end)
+                if not win.any():
+                    continue
+                seed = ((i * W + j) * 12 + (m - 1)) * len(windows) + w
+                Z1 = _dotc_fit_predict(Y0, X0, gcm_e[win, :, i, j], pr_col, seed)
+                idx = np.flatnonzero(win)
+                keep = (ev_yr[idx] >= keep_start) & (ev_yr[idx] <= keep_end)
+                out[idx[keep], :, j] = Z1[keep]
     return out
 
 
-def _detrend_linear(da: xr.DataArray, ref_year: float) -> xr.DataArray:
-    """Remove linear trend per grid point: x' = x - slope * (year - ref_year)."""
-    coeffs = da.polyfit(dim="time", deg=1)
-    slope = coeffs["polyfit_coefficients"].sel(degree=1)
-    years = da.time.dt.year.astype(float)
-    detrended = da - slope * (years - ref_year)
-    return detrended
+def dotc_field(obs: np.ndarray, gcm_c: np.ndarray, gcm_e: np.ndarray,
+               cal_mon: np.ndarray, ev_mon: np.ndarray, ev_yr: np.ndarray,
+               variables: list[str], windows: list[tuple[int, int, int, int]],
+               workers: int = 1) -> np.ndarray:
+    """dOTC on [T, V, H, W] arrays already on the ERA5 grid → [T_eval, V, H, W].
 
-
-def _add_trend(da: xr.DataArray, trend: xr.DataArray, ref_year: float) -> xr.DataArray:
-    """Re-add linear trend: x = x' + trend * (year - ref_year)."""
-    years = da.time.dt.year.astype(float)
-    return da + trend * (years - ref_year)
-
-
-def _dotc_field(gcm_calib: xr.DataArray, obs_calib: xr.DataArray,
-                gcm_eval: xr.DataArray, variable: str) -> xr.DataArray:
-    """Apply DOTC month-by-month to a single-variable field on the ERA5 grid."""
-    clip_min = CLIP_MIN.get(variable)
-    ref_year = float(gcm_calib.time.dt.year.values.mean())  # center of calibration period
-
-    def _apply(gp, obs, gf):
-        # gp: GCM calib [n_calib], obs: ERA5 calib [n_calib], gf: GCM eval [n_eval]
-        # Step 1: detrend calibration data
-        gp_da = xr.DataArray(gp, dims=["time"])
-        obs_da = xr.DataArray(obs, dims=["time"])
-        gf_da = xr.DataArray(gf, dims=["time"])
-
-        # Simple linear detrending on the 1D arrays
-        gp_t = np.arange(len(gp))
-        obs_t = np.arange(len(obs))
-        gf_t = np.arange(len(gf)) + len(gp)
-
-        # Fit trends
-        gp_slope = np.polyfit(gp_t, gp, 1)[0]
-        obs_slope = np.polyfit(obs_t, obs, 1)[0]
-
-        gp_detrended = gp - gp_slope * (gp_t - gp_t.mean())
-        obs_detrended = obs - obs_slope * (obs_t - obs_t.mean())
-        gf_detrended = gf - gp_slope * (gf_t - gf_t.mean())
-
-        # Step 2: Apply CDF-t to detrended data
-        bc = _cdft_apply(gp_detrended, obs_detrended, gf_detrended, clip_min)
-
-        # Step 3: Re-add GCM trend
-        bc = bc + gp_slope * (gf_t - gp_t.mean())
-        return bc
-
-    results = []
-    for m in range(1, 13):
-        gp  = gcm_calib.isel(time=gcm_calib.time.dt.month == m).drop_vars("time")
-        obs = obs_calib.isel(time=obs_calib.time.dt.month == m).drop_vars("time")
-        gf  = gcm_eval.isel(time=gcm_eval.time.dt.month == m)
-        if gp.sizes["time"] == 0 or obs.sizes["time"] == 0 or gf.sizes["time"] == 0:
-            continue
-        corrected = xr.apply_ufunc(
-            _apply,
-            gp, obs, gf.drop_vars("time"),
-            input_core_dims=[["time"], ["time"], ["time"]],
-            output_core_dims=[["time"]],
-            vectorize=True,
-            output_dtypes=[np.float32],
-            exclude_dims={"time"},
-        )
-        corrected = corrected.assign_coords(time=gf.time)
-        results.append(corrected)
-
-    return xr.concat(results, dim="time").sortby("time").transpose("time", "lat", "lon")
-
-
-# ── Sliding-window wrapper ────────────────────────────────────────────────────
-
-def _sliding_windows(eval_start: int, eval_end: int,
-                     win_size: int = 20, step: int = 10, trim: int = 5,
-                     ) -> list[tuple[int, int, int, int]]:
-    """Return (win_start, win_end, keep_start, keep_end) tuples."""
-    windows: list[tuple[int, int, int, int]] = []
-    win_start = eval_start - trim
-    while True:
-        win_end    = win_start + win_size - 1
-        keep_start = max(win_start + trim, eval_start)
-        keep_end   = min(win_end   - trim, eval_end)
-        if keep_start > eval_end:
-            break
-        windows.append((win_start, win_end, keep_start, keep_end))
-        if keep_end >= eval_end:
-            break
-        win_start += step
-    return windows
-
-
-def _dotc_field_sliding(gcm_calib: xr.DataArray, obs_calib: xr.DataArray,
-                         gcm_eval: xr.DataArray, variable: str,
-                         win_size: int = 20, step: int = 10, trim: int = 5,
-                         ) -> xr.DataArray:
-    """DOTC with sliding windows over the evaluation period."""
-    eval_start = int(gcm_eval.time.dt.year.values.min())
-    eval_end   = int(gcm_eval.time.dt.year.values.max())
-
-    windows = _sliding_windows(eval_start, eval_end, win_size, step, trim)
-    if len(windows) == 1:
-        return _dotc_field(gcm_calib, obs_calib, gcm_eval, variable)
-
-    pieces = []
-    for win_start, win_end, keep_start, keep_end in windows:
-        yr = gcm_eval.time.dt.year.values
-        gcm_win = gcm_eval.isel(time=(yr >= win_start) & (yr <= win_end))
-        if gcm_win.sizes["time"] == 0:
-            continue
-        corrected_win  = _dotc_field(gcm_calib, obs_calib, gcm_win, variable)
-        yr_c = corrected_win.time.dt.year.values
-        corrected_keep = corrected_win.isel(
-            time=(yr_c >= keep_start) & (yr_c <= keep_end)
-        )
-        if corrected_keep.sizes["time"] > 0:
-            pieces.append(corrected_keep)
-
-    if not pieces:
-        return _dotc_field(gcm_calib, obs_calib, gcm_eval, variable)
-    return xr.concat(pieces, dim="time").sortby("time")
+    obs / gcm_c: calibration ERA5 / GCM (time-aligned); gcm_e: GCM to correct.
+    """
+    _G.update(obs=obs, gcm_c=gcm_c, gcm_e=gcm_e, cal_mon=cal_mon, ev_mon=ev_mon,
+              ev_yr=ev_yr, windows=windows,
+              pr_col=variables.index("pr") if "pr" in variables else None)
+    H = gcm_e.shape[2]
+    t0 = time.time()
+    rows: list[np.ndarray] = [None] * H  # type: ignore[list-item]
+    if workers > 1:
+        with mp.get_context("fork").Pool(workers) as pool:
+            for n, (i, row) in enumerate(zip(range(H), pool.imap(_correct_row, range(H)))):
+                rows[i] = row
+                print(f"    row {n + 1}/{H} ({time.time() - t0:.0f}s)", flush=True)
+    else:
+        for i in range(H):
+            rows[i] = _correct_row(i)
+    out = np.stack(rows, axis=2)  # [T_eval, V, H, W]
+    for c, var in enumerate(variables):
+        if var in CLIP_MIN:
+            np.maximum(out[:, c], CLIP_MIN[var], out=out[:, c])
+    return out
 
 
 # ── Convenience wrapper (for inline METHOD_REGISTRY use) ─────────────────────
 
 def dotc_downscale(gcm: xr.DataArray, obs: xr.DataArray,
                    variable: str) -> xr.DataArray:
-    """DOTC on the ERA5 grid (degenerate: calib = eval period)."""
-    _HERE = Path(__file__).resolve().parent
-    sys.path.insert(0, str(_HERE.parent / "evaluation"))
+    """Univariate dOTC on the ERA5 grid (degenerate: calib = eval period)."""
     from data_processing import bicubic_regrid  # noqa: PLC0415
 
     gcm_fine = bicubic_regrid(gcm, obs.lat.values, obs.lon.values)
     gcm_fine = gcm_fine.assign_coords(time=obs.time)
-    return _dotc_field(gcm_fine, obs, gcm_fine, variable)
+    years = obs.time.dt.year.values
+    window = [(int(years.min()), int(years.max()), int(years.min()), int(years.max()))]
+    out = dotc_field(obs.values[:, None], gcm_fine.values[:, None], gcm_fine.values[:, None],
+                     obs.time.dt.month.values, obs.time.dt.month.values, years,
+                     [variable], window)
+    return obs.copy(data=out[:, 0])
 
 
-# ── Standalone inference ────────────────────────────────────────────────────
+# ── Standalone inference ──────────────────────────────────────────────────────
 
-def run(era5_dir: Path, gcm_dir: Path, out_dir: Path,
-        variables: list[str],
-        calib_start: int, calib_end: int,
-        eval_start: int, eval_end: int,
-        scenario: str = "ssp370",
-        win_size: int = 20, step: int = 10, trim: int = 5) -> None:
-
-    _HERE = Path(__file__).resolve().parent
-    sys.path.insert(0, str(_HERE.parent / "evaluation"))
+def run(era5_dir: Path, gcm_dir: Path, out_dir: Path, variables: list[str],
+        calib_start: int, calib_end: int, eval_start: int, eval_end: int,
+        scenario: str = "ssp370", win_size: int = 20, step: int = 10, trim: int = 5,
+        workers: int = 1) -> None:
     from data_processing import (  # noqa: PLC0415
-        DEFAULT_VARIABLES, load_era5, load_gcm, align_time,
-        save_predictions, bicubic_regrid,
+        load_era5, load_gcm, align_time, save_predictions, bicubic_regrid,
     )
-    import torch
+    import torch  # noqa: PLC0415
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Calibration: {calib_start}–{calib_end}  |  Evaluation: {eval_start}–{eval_end}"
-          f"  |  Window: {win_size}yr step {step}yr trim {trim}yr")
+    print(f"dOTC | calib {calib_start}–{calib_end} | eval {eval_start}–{eval_end} | "
+          f"window {win_size}y step {step}y trim {trim}y | {workers} workers", flush=True)
 
-    era5_calib, gcm_calib, gcm_eval = {}, {}, {}
+    calib = {}
+    gcm_eval = {}
     for var in variables:
         print(f"  Loading {var} ...", flush=True)
-        era5_calib[var] = load_era5(era5_dir, var, calib_start, calib_end)
-        gcm_calib[var]  = load_gcm(gcm_dir, var, calib_start, calib_end, "historical")
-        gcm_eval[var]   = load_gcm(gcm_dir, var, eval_start,  eval_end,   scenario)
+        calib[f"era5_{var}"] = load_era5(era5_dir, var, calib_start, calib_end)
+        calib[f"gcm_{var}"] = load_gcm(gcm_dir, var, calib_start, calib_end, "historical")
+        # From eval_start - trim, so the first window (e.g. 1995-2014) is full.
+        gcm_eval[var] = load_gcm(gcm_dir, var, eval_start - trim, eval_end, scenario)
+    calib = align_time(calib)
+    gcm_eval = align_time(gcm_eval)
 
-    all_calib = {f"era5_{v}": era5_calib[v] for v in variables}
-    all_calib.update({f"gcm_{v}": gcm_calib[v] for v in variables})
-    aligned_calib = align_time(all_calib)
-    era5_calib = {v: aligned_calib[f"era5_{v}"] for v in variables}
-    gcm_calib  = {v: aligned_calib[f"gcm_{v}"]  for v in variables}
+    ref = calib[f"era5_{variables[0]}"]
+    lat, lon = ref.lat.values, ref.lon.values
+    obs = np.stack([calib[f"era5_{v}"].values for v in variables], 1).astype(np.float32)
+    gcm_c = np.stack([bicubic_regrid(calib[f"gcm_{v}"], lat, lon).values
+                      for v in variables], 1).astype(np.float32)
+    ev_time = gcm_eval[variables[0]].time
+    gcm_e = np.stack([bicubic_regrid(gcm_eval[v], lat, lon).values
+                      for v in variables], 1).astype(np.float32)
+    print(f"  calib {obs.shape}, eval {gcm_e.shape}", flush=True)
 
-    ref_era5 = next(iter(era5_calib.values()))
-    target_lat, target_lon = ref_era5.lat.values, ref_era5.lon.values
+    windows = _sliding_windows(eval_start, eval_end, win_size, step, trim)
+    out = dotc_field(obs, gcm_c, gcm_e, ref.time.dt.month.values,
+                     ev_time.dt.month.values, ev_time.dt.year.values,
+                     variables, windows, workers)
+    in_eval = ev_time.dt.year.values >= eval_start
+    out, ev_time = out[in_eval], ev_time[in_eval]
+    n_nan = int(np.isnan(out).sum())
+    if n_nan:
+        raise RuntimeError(f"dOTC left {n_nan} values unfilled — check the windows")
 
-    arrays = []
-    ref_da = None
-    for var in variables:
-        print(f"  DOTC {var} ...", flush=True)
-        gc_c = bicubic_regrid(gcm_calib[var], target_lat, target_lon)
-        gc_c = gc_c.assign_coords(time=era5_calib[var].time)
-        gc_e = bicubic_regrid(gcm_eval[var], target_lat, target_lon)
-        gc_e = gc_e.assign_coords(time=gcm_eval[var].time)
-
-        corrected = _dotc_field_sliding(gc_c, era5_calib[var], gc_e, var,
-                                         win_size=win_size, step=step, trim=trim)
-        if ref_da is None:
-            ref_da = corrected
-        arrays.append(torch.tensor(corrected.values, dtype=torch.float32))
-
-    tensor = torch.stack(arrays, dim=1)
-    save_predictions(tensor, variables, out_dir, ref_da)
+    ref_da = xr.DataArray(dims=["time", "lat", "lon"],
+                          coords={"time": ev_time.values, "lat": lat, "lon": lon})
+    save_predictions(torch.from_numpy(out), variables, out_dir, ref_da)
 
 
 def main():
@@ -268,28 +219,23 @@ def main():
     p.add_argument("--gcm-dir",     required=True)
     p.add_argument("--out-dir",     required=True)
     p.add_argument("--variables",   nargs="+", default=None)
-    p.add_argument("--calib-start", type=int, default=None)
-    p.add_argument("--calib-end",   type=int, default=None)
+    p.add_argument("--calib-start", type=int, default=1980)
+    p.add_argument("--calib-end",   type=int, default=1999)
     p.add_argument("--eval-start",  type=int, default=2000)
     p.add_argument("--eval-end",    type=int, default=2100)
     p.add_argument("--scenario",    default="ssp370")
     p.add_argument("--win-size",    type=int, default=20)
     p.add_argument("--step",        type=int, default=10)
     p.add_argument("--trim",        type=int, default=5)
+    p.add_argument("--workers",     type=int,
+                   default=int(os.environ.get("SLURM_CPUS_PER_TASK", "1")))
     args = p.parse_args()
 
-    _HERE = Path(__file__).resolve().parent
-    sys.path.insert(0, str(_HERE.parent / "evaluation"))
     from data_processing import DEFAULT_VARIABLES  # noqa: PLC0415
-
-    variables   = args.variables or DEFAULT_VARIABLES
-    calib_start = args.calib_start if args.calib_start is not None else args.eval_start
-    calib_end   = args.calib_end   if args.calib_end   is not None else args.eval_end
-
     run(Path(args.era5_dir), Path(args.gcm_dir), Path(args.out_dir),
-        variables, calib_start, calib_end,
-        args.eval_start, args.eval_end, args.scenario,
-        args.win_size, args.step, args.trim)
+        args.variables or DEFAULT_VARIABLES,
+        args.calib_start, args.calib_end, args.eval_start, args.eval_end,
+        args.scenario, args.win_size, args.step, args.trim, args.workers)
 
 
 if __name__ == "__main__":

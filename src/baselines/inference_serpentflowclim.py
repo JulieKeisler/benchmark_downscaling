@@ -328,6 +328,18 @@ class SFT:
         self._save(recon)
         print(f"INFER complete in {time.time()-t0:.1f}s -> {self.pred_dir}", flush=True)
 
+    def save_member(self, member: int, out_dir: Path) -> None:
+        """Write one cached ensemble member (not the mean) as standard predictions.
+
+        Averaging members deflates the variance of a stochastic generator, so the
+        benchmark scores single members; the cache comes from the infer phase.
+        """
+        stats = json.loads((self.prep_dir / "cond_stats.json").read_text())
+        z = torch.load(self.prep_dir / f"inference_ensemble{member}.pt",
+                       map_location="cpu", weights_only=False)
+        self._save(self._reconstruct(z, stats), out_dir)
+        print(f"member {member} -> {out_dir}", flush=True)
+
     # ── reconstruction & save ───────────────────────────────────────────────
 
     def _reconstruct(self, z: torch.Tensor, stats: dict) -> torch.Tensor:
@@ -351,7 +363,7 @@ class SFT:
                 out[:, c] = torch.clamp(out[:, c], min=0.0)
         return out
 
-    def _save(self, tensor: torch.Tensor) -> None:
+    def _save(self, tensor: torch.Tensor, out_dir: Path | None = None) -> None:
         lat = np.load(self.prep_dir / "lat.npy")
         lon = np.load(self.prep_dir / "lon.npy")
         dates = list(np.load(self.prep_dir / "eval_dates.npy", allow_pickle=True))
@@ -360,7 +372,7 @@ class SFT:
             coords={"time": np.array(dates, dtype="datetime64[ns]"),
                     "lat": lat, "lon": lon},
         )
-        save_predictions(tensor, self.variables, self.pred_dir,
+        save_predictions(tensor, self.variables, out_dir or self.pred_dir,
                          ref[self.variables[0]])
 
 
@@ -371,7 +383,7 @@ def _import_train():
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("--phase", required=True, choices=["prep", "train", "infer"])
+    p.add_argument("--phase", required=True, choices=["prep", "train", "infer", "member"])
     p.add_argument("--region", required=True)
     p.add_argument("--era5-dir", default=None)
     p.add_argument("--gcm-dir", default=None)
@@ -384,6 +396,10 @@ def main():
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--ensemble", type=int, default=N_ENSEMBLE)
     p.add_argument("--no-resume", action="store_true")
+    p.add_argument("--member", type=int, default=1,
+                   help="--phase member: which cached ensemble member to write")
+    p.add_argument("--out-dir", default=None,
+                   help="--phase member: destination (default: --pred-dir)")
     args = p.parse_args()
 
     # Resolve region defaults from regions.yaml
@@ -405,6 +421,8 @@ def main():
         sf.train(args.device, resume=not args.no_resume)
     elif args.phase == "infer":
         sf.infer(args.device, n_ensemble=args.ensemble)
+    elif args.phase == "member":
+        sf.save_member(args.member, Path(args.out_dir or args.pred_dir))
 
 
 if __name__ == "__main__":

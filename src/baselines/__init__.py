@@ -41,9 +41,11 @@ def _build_registry() -> dict:
             "then evaluate with `--method corrdiff_qm --pred-dir results/corrdiff_qm`."
         )
 
+    from functools import partial
     return {
         "bicubic":     bicubic_downscale,
         "bcsd":        bcsd_downscale,
+        "eqm":         partial(bcsd_downscale, detrend=False),
         "cdft":        cdft_downscale,
         "dotc":        dotc_downscale,
         "corrdiff_qm": _corrdiff_qm_stub,
