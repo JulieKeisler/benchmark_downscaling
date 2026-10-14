@@ -882,8 +882,9 @@ def _search_stamp() -> tuple:
 
 
 def _on_search() -> None:
-    """New search: rebuild the tabs so the Search tab opens."""
+    """New search: rebuild the tabs so the Search tab opens; drop any old #anchor."""
     st.session_state["nav_count"] = st.session_state.get("nav_count", 0) + 1
+    st.session_state["clear_url_hash"] = True
 
 
 # A shared ?search=... link opens with that search.
@@ -1115,6 +1116,7 @@ def _goto(tab: str, page: str, section: str, detail: bool = False) -> None:
 def _close_search() -> None:
     st.session_state["search_box"] = ""
     st.session_state["nav_count"] = st.session_state.get("nav_count", 0) + 1
+    st.session_state["clear_url_hash"] = True
 
 
 # A search adds a "Search" tab, opened on top of the others. The tabs key
@@ -1151,6 +1153,17 @@ if _search_title:
             _t.markdown(_h["snippet"].replace("$", "\\$") + _more)
 tab_welcome, tab_table, tab_radar, tab_lines, tab_maps, tab_intervar, *tab_tail = _all_tabs
 tab_load = tab_tail[0] if tab_tail else None
+if st.session_state.pop("clear_url_hash", False):
+    # A #section anchor left by an earlier click would stay in the URL after
+    # a new search (?search=...#old-section). Remove it from the app frame and
+    # from the hosting page (same origin on Streamlit Community Cloud).
+    st.html(
+        "<script>const clr=()=>{for(const w of [window, window.parent]){try{"
+        "if(w.location.hash)w.history.replaceState(w.history.state,'',"
+        "w.location.pathname+w.location.search);}catch(e){}}};"
+        "clr();[300,1000,2500].forEach(t=>setTimeout(clr,t));</script>",
+        unsafe_allow_javascript=True,
+    )
 _nav_scroll = st.session_state.pop("nav_scroll", None)
 if _nav_scroll:
     st.html(

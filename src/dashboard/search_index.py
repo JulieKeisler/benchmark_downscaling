@@ -59,7 +59,8 @@ DETAIL_KEYS = ("detailed", "eq", "grading")
 
 def build_index(source: str, tab_names: dict[str, str],
                 doc_locations: dict[str, tuple[str, str]],
-                default_location: tuple[str, str] = ("Page", "")) -> list[dict]:
+                default_location: tuple[str, str] = ("Page", ""),
+                hidden_flags: tuple[str, ...] = ("DEV_NOTES",)) -> list[dict]:
     """Index every displayable string of a Streamlit script.
 
     tab_names: `with <name>:` block → tab label (e.g. {"tab_maps": "Spatial maps"});
@@ -70,7 +71,9 @@ def build_index(source: str, tab_names: dict[str, str],
         inside a tab.
     Returns entries {"tab", "page", "section", "detail", "text", "norm", "line"}:
     `page` is the sub-page chosen by a `*_mode == "X"` branch (e.g. Welcome ›
-    Methods), `section` the last heading above the text. In documentation
+    Methods), `section` the last heading above the text. Text under
+    `if <flag>:` for a flag in `hidden_flags` (developer notes) is left out. In
+    documentation
     dicts, an entry {"name": ..., "simple": ..., "detailed": ...} gives its
     strings section = name, and `detail` marks those under DETAIL_KEYS (shown
     only in the detailed view).
@@ -146,8 +149,15 @@ def build_index(source: str, tab_names: dict[str, str],
             elif isinstance(t, ast.Name) and t.id in first_use:
                 var_assigns.append((node.lineno, node.end_lineno, first_use[t.id]))
 
-    # Strings that are never shown: docstrings, widget keys, dict keys of docs.
+    # Strings that are never shown: docstrings, widget keys, dict keys of docs,
+    # developer-only notes.
     skip = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and any(isinstance(n, ast.Name) and n.id in hidden_flags
+                                            for n in ast.walk(node.test)):
+            for stmt in node.body:
+                for sub in ast.walk(stmt):
+                    skip.add(id(sub))
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.FunctionDef, ast.ClassDef)) and node.body:
             first = node.body[0]

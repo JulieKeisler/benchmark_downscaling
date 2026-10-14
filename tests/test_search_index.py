@@ -62,6 +62,12 @@ def test_query_cleaned_like_text():
     assert si.search(idx, "fine_spectrum_metric")
 
 
+def test_developer_notes_not_indexed():
+    src = 'with tab_a:\n    if DEV_NOTES:\n        st.info("run the backfill script")\n    else:\n        st.info("No energy data")\n'
+    idx = si.build_index(src, TABS, {})
+    assert not si.search(idx, "backfill") and si.search(idx, "energy data")
+
+
 def test_code_strings_not_indexed():
     texts = [e["text"] for e in _idx()]
     assert "some_widget_key" not in texts and "simple" not in texts
