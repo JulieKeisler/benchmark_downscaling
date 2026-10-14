@@ -115,6 +115,20 @@ def build_index(source: str, tab_names: dict[str, str],
             for k, v in zip(keys, d.values):
                 for sub in ast.walk(v):
                     doc_meta[id(sub)] = (clean(name.value), k in DETAIL_KEYS)
+    # Other documentation dicts keyed like the named ones (e.g. METHOD_LINKS by
+    # method key) take the same names.
+    key_name: dict[str, str] = {}
+    outer = [n.value for n in tree.body if isinstance(n, ast.Assign) and isinstance(n.value, ast.Dict)
+             and any(isinstance(t, ast.Name) and t.id in doc_locations for t in n.targets)]
+    for d in outer:
+        for k, v in zip(d.keys, d.values):
+            if isinstance(k, ast.Constant) and isinstance(v, ast.Dict) and id(v.values[0]) in doc_meta:
+                key_name[k.value] = doc_meta[id(v.values[0])][0]
+    for d in outer:
+        for k, v in zip(d.keys, d.values):
+            if isinstance(k, ast.Constant) and k.value in key_name:
+                for sub in ast.walk(v):
+                    doc_meta.setdefault(id(sub), (key_name[k.value], False))
     first_use: dict[str, int] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
@@ -202,7 +216,7 @@ def search(entries: list[dict], query: str, max_locations: int = 25) -> list[dic
     order; the snippet marks the first word in bold; `detail` is True when a
     match is only shown in the detailed view.
     """
-    words = [w for w in normalize(query).split() if w]
+    words = [w for w in normalize(clean(query)).split() if w]   # same cleaning as the text
     if not words:
         return []
     pats = [re.compile(r"(?<!\w)" + re.escape(w)) for w in words]

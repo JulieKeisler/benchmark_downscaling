@@ -11,6 +11,7 @@ import functools
 import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -880,6 +881,15 @@ def _search_stamp() -> tuple:
     return tuple((here / f).stat().st_mtime for f in ("dashboard.py", "search_index.py", "plot_meta.py"))
 
 
+def _on_search() -> None:
+    """New search: rebuild the tabs so the Search tab opens."""
+    st.session_state["nav_count"] = st.session_state.get("nav_count", 0) + 1
+
+
+# A shared ?search=... link opens with that search.
+if "search_box" not in st.session_state and st.query_params.get("search"):
+    st.session_state["search_box"] = st.query_params["search"]
+
 with st.sidebar:
     st.header("Filters")
     sel_methods = st.multiselect(
@@ -907,10 +917,8 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    search_query = st.text_input("🔎 Search", key="search_box",
-                                 placeholder="any word: SSR, Dunkelflaute, Wasserstein…")
-    if search_query.strip():
-        st.caption("Results are at the top of the page.")
+    st.text_input("🔎 Search", key="search_box", on_change=_on_search,
+                  placeholder="any word: SSR, Dunkelflaute, Wasserstein…")
 
     st.markdown("---")
     st.caption(
@@ -1101,21 +1109,37 @@ def _goto(tab: str, page: str, section: str, detail: bool = False) -> None:
         if detail and page in ("Methods", "Metrics"):   # text only in the detailed view
             st.session_state[f"welcome_{page.lower()}_detailed"] = True
     st.session_state["nav_scroll"] = section or page
-    st.session_state["search_box"] = ""
+    _close_search()
 
 
 def _close_search() -> None:
     st.session_state["search_box"] = ""
+    st.session_state["nav_count"] = st.session_state.get("nav_count", 0) + 1
 
 
+# A search adds a "Search" tab, opened on top of the others. The tabs key
+# changes only on a new search or a result click, so the tabs are rebuilt on
+# the chosen tab then; otherwise the user's own tab choice is kept.
 _query = st.session_state.get("search_box", "").strip()
-if _query:
-    _hits = search_index.search(_app_search_index(_search_stamp()), _query)
-    with st.container(border=True):
+# The URL carries the current search (?search=...), so a results page can be shared.
+if _query and st.query_params.get("search") != _query:
+    st.query_params["search"] = _query
+elif not _query and "search" in st.query_params:
+    del st.query_params["search"]
+_search_title = ("🔎 Search: " + re.sub(r"[*_`~\[\]()#]", "", _query)) if _query else None
+_nav_tab = st.session_state.get("nav_tab")
+_all_tabs = st.tabs(
+    ([_search_title] if _search_title else []) + _tab_titles,
+    default=_search_title or (_nav_tab if _nav_tab in _tab_titles else None),
+    key=f"main_tabs_{st.session_state.get('nav_count', 0)}")
+if _search_title:
+    tab_search, *_all_tabs = _all_tabs
+    with tab_search:
+        _hits = search_index.search(_app_search_index(_search_stamp()), _query)
         _c1, _c2 = st.columns([8, 1])
-        _c1.markdown(f"**Search: “{_query}”** — "
-                     + (f"found in {len(_hits)} place{'s' if len(_hits) > 1 else ''}; "
-                        "click one to go there." if _hits else "no matches."))
+        _c1.markdown(f"**{len(_hits) or 'No'} place{'s' if len(_hits) != 1 else ''}** "
+                     f"in the dashboard match “{_query}”"
+                     + ("; click one to go there." if _hits else "."))
         _c2.button("Close", key="search_close", on_click=_close_search, width="stretch")
         for _i, _h in enumerate(_hits):
             _loc = " › ".join(x for x in (_h["tab"], _h["page"], _h["section"]) if x)
@@ -1125,12 +1149,7 @@ if _query:
                       args=(_h["tab"], _h["page"], _h["section"], _h["detail"]),
                       disabled=_tab_title(_h["tab"]) is None, width="stretch")
             _t.markdown(_h["snippet"].replace("$", "\\$") + _more)
-
-# The key changes only when a search result is clicked: the tabs are then
-# rebuilt on the chosen tab; otherwise the user's own tab choice is kept.
-tab_welcome, tab_table, tab_radar, tab_lines, tab_maps, tab_intervar, *tab_tail = st.tabs(
-    _tab_titles, default=st.session_state.get("nav_tab") if st.session_state.get("nav_tab") in _tab_titles else None,
-    key=f"main_tabs_{st.session_state.get('nav_count', 0)}")
+tab_welcome, tab_table, tab_radar, tab_lines, tab_maps, tab_intervar, *tab_tail = _all_tabs
 tab_load = tab_tail[0] if tab_tail else None
 _nav_scroll = st.session_state.pop("nav_scroll", None)
 if _nav_scroll:

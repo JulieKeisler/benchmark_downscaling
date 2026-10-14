@@ -57,6 +57,11 @@ def test_function_locations():
     assert h["tab"] == "Line plots"
 
 
+def test_query_cleaned_like_text():
+    idx = si.build_index('with tab_a:\n    st.caption("see fine_spectrum_metric in metrics")\n', TABS, {})
+    assert si.search(idx, "fine_spectrum_metric")
+
+
 def test_code_strings_not_indexed():
     texts = [e["text"] for e in _idx()]
     assert "some_widget_key" not in texts and "simple" not in texts
