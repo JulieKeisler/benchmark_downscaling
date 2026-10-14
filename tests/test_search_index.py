@@ -20,6 +20,9 @@ with tab_b:
         st.markdown(DOCS["m"]["simple"])
     st.markdown("#### Spectra")
     st.caption(f"Fine scales below {km} km")
+
+def line_help(v):
+    return "Seasonal cycle of the monthly means"
 '''
 TABS = {"tab_a": "Inter-variable", "tab_b": "Welcome"}
 
@@ -29,14 +32,13 @@ def _idx():
 
 
 def test_locations_and_sections():
-    hits = {h["snippet"].replace("**", ""): (h["tab"], h["section"])
-            for h in si.search(_idx(), "dunkelflaute")}
-    assert list(hits.values()) == [("Inter-variable", "Energy events")]
+    hits = [(h["tab"], h["page"], h["section"]) for h in si.search(_idx(), "dunkelflaute")]
+    assert hits == [("Inter-variable", "", "Energy events")]
 
 
 def test_module_level_text_takes_location_of_first_use():
     (h,) = si.search(_idx(), "SSR")
-    assert (h["tab"], h["section"]) == ("Welcome", "Methods")
+    assert (h["tab"], h["page"]) == ("Welcome", "Methods")
 
 
 def test_word_start_matching_and_bold_span():
@@ -47,6 +49,12 @@ def test_word_start_matching_and_bold_span():
 def test_accents_and_all_words():
     assert si.search(_idx(), "methode")                      # accent-insensitive
     assert si.search(_idx(), "fine km") and not si.search(_idx(), "fine dunkelflaute")
+
+
+def test_function_locations():
+    idx = si.build_index(SRC, TABS, {"line_help": ("Line plots", "")})
+    (h,) = si.search(idx, "monthly means")
+    assert h["tab"] == "Line plots"
 
 
 def test_code_strings_not_indexed():

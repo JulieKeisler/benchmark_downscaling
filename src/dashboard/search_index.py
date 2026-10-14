@@ -54,6 +54,9 @@ def _is_text(s: str) -> bool:
     return not _CODE_LIKE.match(s) or (s[0].isupper() and "_" not in s and "." not in s)
 
 
+DETAIL_KEYS = ("detailed", "eq", "grading")
+
+
 def build_index(source: str, tab_names: dict[str, str],
                 doc_locations: dict[str, tuple[str, str]],
                 default_location: tuple[str, str] = ("Page", "")) -> list[dict]:
@@ -61,13 +64,19 @@ def build_index(source: str, tab_names: dict[str, str],
 
     tab_names: `with <name>:` block → tab label (e.g. {"tab_maps": "Spatial maps"});
         `with st.sidebar:` is labelled "Sidebar".
-    doc_locations: module-level variable → (tab, section) for its strings
-        (e.g. {"METHOD_DOCS": ("Welcome", "Methods")}). Other module-level
-        variables take the location where they are first used inside a tab.
-    Returns entries {"tab", "section", "text", "norm", "line"}.
+    doc_locations: module-level variable or function → (tab, page) for its
+        strings (e.g. {"METHOD_DOCS": ("Welcome", "Methods")}). Other
+        module-level variables take the location where they are first used
+        inside a tab.
+    Returns entries {"tab", "page", "section", "detail", "text", "norm", "line"}:
+    `page` is the sub-page chosen by a `*_mode == "X"` branch (e.g. Welcome ›
+    Methods), `section` the last heading above the text. In documentation
+    dicts, an entry {"name": ..., "simple": ..., "detailed": ...} gives its
+    strings section = name, and `detail` marks those under DETAIL_KEYS (shown
+    only in the detailed view).
     """
     tree = ast.parse(source)
-    blocks, assigns, headers = [], [], []
+    blocks, assigns, headers, pages = [], [], [], []
     for node in ast.walk(tree):
         if isinstance(node, ast.With):
             for item in node.items:
@@ -83,11 +92,29 @@ def build_index(source: str, tab_names: dict[str, str],
                     headers.append((node.lineno, clean(a0.value)))
                 elif node.func.attr == "markdown" and a0.value.lstrip().startswith("#"):
                     headers.append((node.lineno, clean(a0.value.strip().split("\n")[0])))
-        elif (isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)
-              and node.left.id.endswith("_mode") and node.comparators
-              and isinstance(node.comparators[0], ast.Constant)):
-            headers.append((node.lineno, str(node.comparators[0].value)))
+        elif (isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
+              and isinstance(node.test.left, ast.Name) and node.test.left.id.endswith("_mode")
+              and isinstance(node.test.comparators[0], ast.Constant)):
+            pages.append((node.body[0].lineno, node.body[-1].end_lineno,
+                          str(node.test.comparators[0].value)))
     headers.sort()
+    doc_meta: dict[int, tuple[str, bool]] = {}   # string node → (doc name, detail)
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else []
+        if not any(isinstance(t, ast.Name) and t.id in doc_locations for t in targets):
+            continue
+        for d in ast.walk(node):
+            if not isinstance(d, ast.Dict):
+                continue
+            keys = [k.value if isinstance(k, ast.Constant) else None for k in d.keys]
+            if "name" not in keys:
+                continue
+            name = d.values[keys.index("name")]
+            if not (isinstance(name, ast.Constant) and isinstance(name.value, str)):
+                continue
+            for k, v in zip(keys, d.values):
+                for sub in ast.walk(v):
+                    doc_meta[id(sub)] = (clean(name.value), k in DETAIL_KEYS)
     first_use: dict[str, int] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
@@ -97,6 +124,8 @@ def build_index(source: str, tab_names: dict[str, str],
     for node in tree.body:
         targets = node.targets if isinstance(node, ast.Assign) else (
             [node.target] if isinstance(node, ast.AnnAssign) else [])
+        if isinstance(node, ast.FunctionDef) and node.name in doc_locations:
+            assigns.append((node.lineno, node.end_lineno, doc_locations[node.name]))
         for t in targets:
             if isinstance(t, ast.Name) and t.id in doc_locations:
                 assigns.append((node.lineno, node.end_lineno, doc_locations[t.id]))
@@ -110,7 +139,7 @@ def build_index(source: str, tab_names: dict[str, str],
             first = node.body[0]
             if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
                 skip.add(id(first.value))
-        elif isinstance(node, ast.keyword) and node.arg in ("key", "format", "width", "unsafe_allow_html"):
+        elif isinstance(node, ast.keyword) and node.arg in ("key", "format", "width", "unsafe_allow_html", "placeholder"):
             for sub in ast.walk(node.value):
                 skip.add(id(sub))
         elif isinstance(node, ast.Dict):
@@ -123,19 +152,22 @@ def build_index(source: str, tab_names: dict[str, str],
         elif isinstance(node, ast.Subscript):
             skip.add(id(node.slice))
 
-    def locate(line: int) -> tuple[str, str]:
+    def locate(line: int) -> tuple[str, str, str]:
         inner = [b for b in blocks if b[0] <= line <= b[1]]
         if inner:
             start, _, tab = max(inner, key=lambda b: b[0])
-            sec = [h for ln, h in headers if start <= ln <= line]
-            return tab, (sec[-1] if sec else "")
+            pg = [p for p in pages if p[0] <= line <= p[1]]
+            page = max(pg, key=lambda p: p[0])[2] if pg else ""
+            lo = max(pg, key=lambda p: p[0])[0] if pg else start
+            sec = [h for ln, h in headers if lo <= ln <= line]
+            return tab, page, (sec[-1] if sec else "")
         for start, end, loc in assigns:
             if start <= line <= end:
-                return loc
+                return loc[0], loc[1], ""
         for start, end, use in var_assigns:
             if start <= line <= end:
                 return locate(use)
-        return default_location
+        return default_location[0], default_location[1], ""
 
     entries = []
     for node in ast.walk(tree):
@@ -153,31 +185,35 @@ def build_index(source: str, tab_names: dict[str, str],
         text = clean(raw)
         if not text:
             continue
-        tab, section = locate(node.lineno)
-        entries.append({"tab": tab, "section": section, "text": text,
-                        "norm": normalize(text), "line": node.lineno})
+        tab, page, section = locate(node.lineno)
+        name, detail = doc_meta.get(id(node), (section, False))
+        entries.append({"tab": tab, "page": page, "section": name, "detail": detail,
+                        "text": text, "norm": normalize(text), "line": node.lineno})
     entries.sort(key=lambda e: e["line"])
     return entries
 
 
 def search(entries: list[dict], query: str, max_locations: int = 25) -> list[dict]:
     """Entries containing every word of `query` (matched from a word start,
-    so "hann" finds "Hann-tapered" but not "channels"), one per (tab, section).
+    so "hann" finds "Hann-tapered" but not "channels"), one per
+    (tab, page, section).
 
-    Returns [{"tab", "section", "snippet", "count"}] in app order; the snippet
-    marks the first word in bold.
+    Returns [{"tab", "page", "section", "detail", "snippet", "count"}] in app
+    order; the snippet marks the first word in bold; `detail` is True when a
+    match is only shown in the detailed view.
     """
     words = [w for w in normalize(query).split() if w]
     if not words:
         return []
     pats = [re.compile(r"(?<!\w)" + re.escape(w)) for w in words]
-    out: dict[tuple[str, str], dict] = {}
+    out: dict[tuple[str, str, str], dict] = {}
     for e in entries:
         if not all(p.search(e["norm"]) for p in pats):
             continue
-        key = (e["tab"], e["section"])
+        key = (e["tab"], e["page"], e["section"])
         if key in out:
             out[key]["count"] += 1
+            out[key]["detail"] = out[key]["detail"] or e["detail"]
             continue
         norm, pos = _normalize_map(e["text"])
         j = pats[0].search(norm).start()
@@ -186,7 +222,8 @@ def search(entries: list[dict], query: str, max_locations: int = 25) -> list[dic
         a, b = max(0, i - 60), min(len(t), k + 80)
         snippet = (("…" if a else "") + t[a:i] + "**" + t[i:k] + "**" + t[k:b]
                    + ("…" if b < len(t) else ""))
-        out[key] = {"tab": e["tab"], "section": e["section"], "snippet": snippet, "count": 1}
+        out[key] = {"tab": e["tab"], "page": e["page"], "section": e["section"],
+                    "detail": e["detail"], "snippet": snippet, "count": 1}
         if len(out) >= max_locations:
             break
     return list(out.values())

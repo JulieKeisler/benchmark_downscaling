@@ -154,6 +154,17 @@ DEV_NOTES = os.environ.get("SHOW_DEV_NOTES") == "1"
 
 st.set_page_config(page_title="Downscaling Benchmark for the Electricity System", layout="wide")
 st.title("Downscaling Benchmark for the Electricity System")
+# Compact sidebar: less space above the first widget and between elements.
+st.html("""<style>
+[data-testid="stSidebarHeader"] {height: 2rem; min-height: 0; padding: 0.4rem 1rem 0 1rem;}
+[data-testid="stMainBlockContainer"] {padding-top: 2.5rem;}
+[data-testid="stSidebarUserContent"] {padding-top: 0 !important; padding-bottom: 0.5rem;}
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {gap: 0.5rem;}
+[data-testid="stSidebar"] hr {margin: 0.25rem 0 !important;}
+[data-testid="stSidebar"] h2 {padding: 0 0 0.1rem 0; font-size: 1.25rem;}
+[data-testid="stSidebar"] [data-baseweb="tag"] {height: 1.4rem; margin: 1px 3px 1px 0;}
+[data-testid="stSidebar"] [data-baseweb="tag"] span {font-size: 0.78rem;}
+</style>""")
 
 # ── Experiment / region + GCM selection ────────────────────────────────────────
 def _has_methods(d: Path) -> bool:
@@ -846,8 +857,11 @@ PROTOCOL_PRIMER = (
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
-def _app_search_index() -> list[dict]:
-    """Every displayable string of this app and of plot_meta, with its tab and section."""
+def _app_search_index(stamp: tuple) -> list[dict]:
+    """Every displayable string of this app and of plot_meta, with its tab and section.
+
+    `stamp` (the source files' mtimes) rebuilds the cached index after an edit.
+    """
     here = Path(__file__).resolve().parent
     tabs = {"tab_welcome": "Welcome", "tab_table": "Metrics table", "tab_radar": "Radar",
             "tab_lines": "Line plots", "tab_maps": "Spatial maps",
@@ -856,8 +870,14 @@ def _app_search_index() -> list[dict]:
             "METHOD_OVERVIEW_MD": ("Welcome", "Methods"), "METRIC_DOCS": ("Welcome", "Metrics"),
             "METRIC_IMPL": ("Welcome", "Metrics"), "METRIC_LABELS": ("Metrics table", "")}
     return (search_index.build_index((here / "dashboard.py").read_text(), tabs, docs)
-            + search_index.build_index((here / "plot_meta.py").read_text(), {}, {},
-                                       ("Line plots / Spatial maps", "plot captions")))
+            + search_index.build_index((here / "plot_meta.py").read_text(), {},
+                                       {"line_help": ("Line plots", ""),
+                                        "map_help": ("Spatial maps", "")}))
+
+
+def _search_stamp() -> tuple:
+    here = Path(__file__).resolve().parent
+    return tuple((here / f).stat().st_mtime for f in ("dashboard.py", "search_index.py", "plot_meta.py"))
 
 
 with st.sidebar:
@@ -881,30 +901,16 @@ with st.sidebar:
     st.caption(
         f"**Experiment:** {exp_label} · {_gcm_label(_selected_gcm)}  \n"
         "**ERA5:** pseudo-obs (1979–2022)  \n"
-        "**Evaluation period:** 2000–2020 against ERA5 and 2000–2100 for GCM related metrics"
-    )
-
-    st.markdown("---")
-    st.markdown(
-        f"🔗 [Benchmark GitHub]({GITHUB_URL})\n\n"
-        "For the electricity system: demand (tas), wind (sfcWind), "
-        "solar/rad, hydro (pr), regimes (psl)."
+        "**Evaluation period:** 2000–2020 against ERA5 and 2000–2100 for GCM related metrics  \n"
+        "For the electricity system: demand (tas), wind (sfcWind), solar/rad, hydro (pr), "
+        f"regimes (psl).  \n🔗 [Benchmark GitHub]({GITHUB_URL})"
     )
 
     st.markdown("---")
     search_query = st.text_input("🔎 Search", key="search_box",
                                  placeholder="any word: SSR, Dunkelflaute, Wasserstein…")
     if search_query.strip():
-        _hits = search_index.search(_app_search_index(), search_query)
-        if _hits:
-            st.success(f"Found in {len(_hits)} place{'s' if len(_hits) > 1 else ''}")
-            for _h in _hits:
-                _loc = _h["tab"] + (f" › {_h['section']}" if _h["section"] else "")
-                _more = f" (+{_h['count'] - 1} more there)" if _h["count"] > 1 else ""
-                st.markdown(f"**{_loc}**{_more}")
-                st.caption(_h["snippet"].replace("$", "\\$"))
-        else:
-            st.caption("No matches.")
+        st.caption("Results are at the top of the page.")
 
     st.markdown("---")
     st.caption(
@@ -1079,8 +1085,71 @@ else:
         "🎯 Welcome", "📊 Metrics table", "🕸 Radar", "📈 Line plots",
         "🗺 Spatial maps", "🔗 Inter-variable",
     ]
-tab_welcome, tab_table, tab_radar, tab_lines, tab_maps, tab_intervar, *tab_tail = st.tabs(_tab_titles)
+
+
+# ── Search results (main window) ──────────────────────────────────────────────
+def _tab_title(name: str) -> str | None:
+    return next((t for t in _tab_titles if t.endswith(name)), None)
+
+
+def _goto(tab: str, page: str, section: str, detail: bool = False) -> None:
+    """Search-result click: open the tab (and Welcome page), scroll to the section."""
+    st.session_state["nav_tab"] = _tab_title(tab)
+    st.session_state["nav_count"] = st.session_state.get("nav_count", 0) + 1
+    if tab == "Welcome" and page:
+        st.session_state["welcome_mode"] = page
+        if detail and page in ("Methods", "Metrics"):   # text only in the detailed view
+            st.session_state[f"welcome_{page.lower()}_detailed"] = True
+    st.session_state["nav_scroll"] = section or page
+    st.session_state["search_box"] = ""
+
+
+def _close_search() -> None:
+    st.session_state["search_box"] = ""
+
+
+_query = st.session_state.get("search_box", "").strip()
+if _query:
+    _hits = search_index.search(_app_search_index(_search_stamp()), _query)
+    with st.container(border=True):
+        _c1, _c2 = st.columns([8, 1])
+        _c1.markdown(f"**Search: “{_query}”** — "
+                     + (f"found in {len(_hits)} place{'s' if len(_hits) > 1 else ''}; "
+                        "click one to go there." if _hits else "no matches."))
+        _c2.button("Close", key="search_close", on_click=_close_search, width="stretch")
+        for _i, _h in enumerate(_hits):
+            _loc = " › ".join(x for x in (_h["tab"], _h["page"], _h["section"]) if x)
+            _more = f" · {_h['count']} matches here" if _h["count"] > 1 else ""
+            _b, _t = st.columns([2, 5])
+            _b.button(_loc, key=f"search_hit_{_i}", on_click=_goto,
+                      args=(_h["tab"], _h["page"], _h["section"], _h["detail"]),
+                      disabled=_tab_title(_h["tab"]) is None, width="stretch")
+            _t.markdown(_h["snippet"].replace("$", "\\$") + _more)
+
+# The key changes only when a search result is clicked: the tabs are then
+# rebuilt on the chosen tab; otherwise the user's own tab choice is kept.
+tab_welcome, tab_table, tab_radar, tab_lines, tab_maps, tab_intervar, *tab_tail = st.tabs(
+    _tab_titles, default=st.session_state.get("nav_tab") if st.session_state.get("nav_tab") in _tab_titles else None,
+    key=f"main_tabs_{st.session_state.get('nav_count', 0)}")
 tab_load = tab_tail[0] if tab_tail else None
+_nav_scroll = st.session_state.pop("nav_scroll", None)
+if _nav_scroll:
+    st.html(
+        "<script>(function(){const target=" + json.dumps(_nav_scroll) + ";"
+        "const norm=s=>s.normalize('NFKD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase()"
+        ".replace(/\\s+/g,' ').trim();const want=norm(target).slice(0,40);let n=0;"
+        "const t=setInterval(()=>{n++;let hit=null;"
+        "for(const p of document.querySelectorAll('[role=\"tabpanel\"]')){"
+        "if(p.hidden||p.offsetParent===null)continue;"
+        "for(const el of p.querySelectorAll('h1,h2,h3,h4,h5,summary,label,p,"
+        "[data-testid=\"stMarkdownContainer\"] > div')){"
+        "if(norm(el.textContent).startsWith(want)){hit=el;break;}}if(hit)break;}"
+        "if(hit){const d=hit.closest('details');if(d&&!d.open)d.open=true;"
+        "hit.scrollIntoView({behavior:'smooth',block:'start'});"
+        "hit.style.outline='3px solid #f6c344';setTimeout(()=>hit.style.outline='',2500);"
+        "clearInterval(t);}if(n>40)clearInterval(t);},250);})();</script>",
+        unsafe_allow_javascript=True,
+    )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 0 — Welcome (pedagogic)
