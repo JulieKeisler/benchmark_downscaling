@@ -1156,12 +1156,13 @@ tab_load = tab_tail[0] if tab_tail else None
 if st.session_state.pop("clear_url_hash", False):
     # A #section anchor left by an earlier click would stay in the URL after
     # a new search (?search=...#old-section). Remove it from the app frame and
-    # from the hosting page (same origin on Streamlit Community Cloud).
+    # from the hosting page (same origin on Streamlit Community Cloud); keep
+    # doing so for a while, since the run's own URL update comes at its end.
     st.html(
         "<script>const clr=()=>{for(const w of [window, window.parent]){try{"
         "if(w.location.hash)w.history.replaceState(w.history.state,'',"
         "w.location.pathname+w.location.search);}catch(e){}}};"
-        "clr();[300,1000,2500].forEach(t=>setTimeout(clr,t));</script>",
+        "clr();const iv=setInterval(clr,400);setTimeout(()=>clearInterval(iv),20000);</script>",
         unsafe_allow_javascript=True,
     )
 _nav_scroll = st.session_state.pop("nav_scroll", None)
