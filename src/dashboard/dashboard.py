@@ -2086,7 +2086,15 @@ with tab_lines:
 # Tab 4 — Spatial maps
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_maps:
-    col1, col2 = st.columns(2)
+    col1, col2, col3, col4 = st.columns([3, 3, 2, 2])
+    with col3:
+        maps_per_row = st.select_slider("Maps per row", options=[1, 2, 3, 4, 5, 6], value=3,
+                                        key="maps_per_row")
+    with col4:
+        _map_size = st.select_slider("Size", options=["Small", "Medium", "Large", "Full width"],
+                                     value="Full width", key="map_size")
+    # Display width of each map figure: pixels, or the page width.
+    _map_width = {"Small": 700, "Medium": 1000, "Large": 1400}.get(_map_size, "stretch")
     with col1:
         plot_type = st.selectbox(
             "Plot type",
@@ -2217,7 +2225,7 @@ with tab_maps:
                 ax_flat = [a for row in axes.tolist() for a in row]
                 fig.colorbar(im, ax=ax_flat, shrink=0.6, pad=0.02,
                              label=_cb_label, format="%.3g")
-            st.pyplot(fig)
+            st.pyplot(fig, width=_map_width)
             plt.close(fig)
 
         _render_samples_grid(maps_data)
@@ -2248,7 +2256,8 @@ with tab_maps:
                 hi = lo + 1.0
             zmin, zmax, cmap, zmid = lo, hi, "RdYlGn", None
 
-        def _render_cartopy_row(row_methods):
+        def _render_cartopy_grid(methods, n_cols):
+            """All maps in one figure, `n_cols` per row, one shared colorbar."""
             import matplotlib.pyplot as plt
             try:
                 import cartopy.crs as ccrs
@@ -2264,22 +2273,22 @@ with tab_maps:
                     ax.set_extent([lon.min(), lon.max(), lat.min(), lat.max()],
                                   crs=ccrs.PlateCarree())
 
-            # Fixed 2-slot row so every map has the same panel size; an unpaired
-            # trailing map keeps slot width (second slot just hidden).
-            n_slots = 2
+            n_cols = max(1, min(n_cols, len(methods)))
+            n_rows = -(-len(methods) // n_cols)
             proj = ccrs.PlateCarree() if ccrs is not None else None
             fig, axes = plt.subplots(
-                1, n_slots, figsize=(5.2 * n_slots + 0.8, 4.0),
+                n_rows, n_cols, figsize=(3.4 * n_cols + 1.0, 3.0 * n_rows + 0.3),
                 subplot_kw={"projection": proj} if proj else {},
-                squeeze=False, layout="none",
+                squeeze=False, layout="constrained",
             )
-            fig.subplots_adjust(wspace=0.1)
-            if len(row_methods) < n_slots:
-                axes[0, len(row_methods)].axis("off")
             tr = ccrs.PlateCarree() if ccrs is not None else None
             im = None
             shown = []
-            for ax, m in zip(axes[0], row_methods):
+            for k, ax in enumerate(axes.ravel()):
+                if k >= len(methods):
+                    ax.axis("off")
+                    continue
+                m = methods[k]
                 d = maps_data[m]
                 z = np.asarray(d["arr"], dtype=float)
                 if not np.isfinite(z).all():
@@ -2288,17 +2297,15 @@ with tab_maps:
                                    vmin=zmin, vmax=zmax,
                                    **({"transform": tr} if tr is not None else {}))
                 _add_geo(ax, d["lon"], d["lat"])
-                ax.set_title(mlabel(m), fontsize=10)
+                ax.set_title(mlabel(m), fontsize=10 if n_cols <= 3 else 9)
                 shown.append(ax)
             if im is not None:
-                fig.colorbar(im, ax=shown, shrink=0.85, pad=0.02,
+                fig.colorbar(im, ax=shown, shrink=0.85 if n_rows > 1 else 0.9, pad=0.02,
                              label=_cb_label, format="%.3g")
-            st.pyplot(fig)
+            st.pyplot(fig, width=_map_width)
             plt.close(fig)
 
-        methods = list(maps_data.keys())
-        for i in range(0, len(methods), 2):
-            _render_cartopy_row(methods[i:i + 2])
+        _render_cartopy_grid(list(maps_data.keys()), maps_per_row)
 
         if plot_type in ("delta_2040_2060", "delta_2080_2100"):
             st.caption("Δ signal = future − historical. Leftmost panel: GCM Δ reference. "
