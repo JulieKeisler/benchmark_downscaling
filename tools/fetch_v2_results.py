@@ -5,9 +5,9 @@ For every (method, region, GCM) whose latest v2 job (seed 0 / member 1) has
 COMPLETED, rsyncs <cluster results_v2>/<sub>/<method dir>/ to
 <out>/<sub>/<method dir>/, without predictions or checkpoints; <sub> is
 <region> for the region's default GCM, <region>/<gcm> otherwise (the
-dashboard layout). Older local copies of the same dir are replaced. A cell
-whose latest job is not finished is left out, so a partial tree never mixes
-runs.
+dashboard layout). Local copies are synced (rsync --delete). A cell
+whose latest job is not finished is left out (and removed locally), so a
+partial tree never mixes runs.
 
 Usage: python tools/fetch_v2_results.py [--out results/v2]
 """
@@ -54,10 +54,8 @@ def main():
         sub = region if gcm == vs.NATIVE[region] else f"{region}/{gcm}"
         src = f"{j['host']}:{ROOTS[j['host']]}/{sub}/{DIRS[meth]}/"
         dst = out / sub / DIRS[meth]
-        if dst.exists():
-            shutil.rmtree(dst)
-        dst.mkdir(parents=True)
-        subprocess.run(["rsync", "-a", "--exclude=predictions.pt", "--exclude=checkpoints/",
+        dst.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["rsync", "-a", "--delete", "--exclude=predictions.pt", "--exclude=checkpoints/",
                         "--exclude=*.pth", src, str(dst) + "/"], check=True)
         if not (dst / "metrics.json").exists():
             raise SystemExit(f"{src}: finished job {j['id']} but no metrics.json")

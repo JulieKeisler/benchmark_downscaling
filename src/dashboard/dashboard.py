@@ -2481,15 +2481,16 @@ if tab_load is not None:
         )
 
         tam_dir = TAM_DIR
-        _tam_gcm_native = _selected_gcm == NATIVE_GCM.get(_selected)
-        # Match the suffix emitted by net_lens_region.py: native coupling keeps
-        # the legacy region-only files; factorial couplings get _region_gcm.
-        region_sfx = "" if (_selected == "france" and _tam_gcm_native) else f"_{_selected}"
-        if not _tam_gcm_native:
+        # Suffix emitted by net_lens_region.py: _region for the region's default
+        # GCM (results stored at the region's top level), _region_gcm otherwise.
+        if _selected_gcm == NATIVE_GCM.get(_selected):
+            region_sfx = f"_{_selected}"
+        else:
             region_sfx = f"_{_selected}_{_selected_gcm}"
-        rep_opts = ["Full Grid PCA", "Regional Barycenters", "Regional + Renewables"]
-        if _selected != "france":
-            rep_opts = ["Full Grid PCA"]
+        _rep_files = {"Full Grid PCA": "metrics_results", "Regional Barycenters": "metrics_regional",
+                      "Regional + Renewables": "metrics_regional_full"}
+        rep_opts = [r for r, f in _rep_files.items() if (tam_dir / f"{f}{region_sfx}.json").exists()] \
+            or ["Full Grid PCA"]
         rep_choice = st.selectbox(
             "Spatial Representation",
             rep_opts,
@@ -2507,9 +2508,6 @@ if tab_load is not None:
 
         jpath = tam_dir / json_map[rep_choice][0]
         cdf_path = tam_dir / json_map[rep_choice][1]
-        if not jpath.exists() and _selected != "france":
-            jpath = tam_dir / f"metrics_results{region_sfx}.json"
-            cdf_path = tam_dir / f"cdf_results{region_sfx}.npz"
 
         def _tam_label(k: str) -> str:
             key = k.strip().lower()

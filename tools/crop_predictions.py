@@ -30,6 +30,10 @@ def main():
     args = p.parse_args()
     for cell in args.cells:
         src, dst = Path(args.root) / cell, Path(args.dst) / cell
+        if (dst / "predictions.pt").exists() and (dst / "metrics.json").exists() \
+                and (dst / "metrics.json").stat().st_mtime >= (src / "metrics.json").stat().st_mtime:
+            print(f"{cell}: already cropped", flush=True)
+            continue
         dates = np.load(src / "eval_dates.npy", allow_pickle=True)
         years = np.array([int(str(d)[:4]) for d in dates])
         keep = (years >= args.start) & (years <= args.end)

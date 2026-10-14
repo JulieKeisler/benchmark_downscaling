@@ -67,9 +67,11 @@ def parse_name(name: str):
     meth, seed, variant = m["m"], int(m["s"]) if m["s"] else None, None
     if meth.startswith("reeval_"):
         meth, variant = meth[len("reeval_"):], "reeval"
-    ev = re.match(r"eval_corrdiff_qm_s(\d)$", meth)
-    if ev:
-        meth, seed, variant = "corrdiff", int(ev[1]), "evalonly"
+    if meth.startswith("eval_"):   # evaluation only, on existing predictions
+        meth, variant = meth[len("eval_"):], "evalonly"
+        sm = re.match(r"(.+)_s(\d)$", meth)
+        if sm:
+            meth, seed = sm[1], int(sm[2])
     if meth == "corrdiff_qm":
         meth = "corrdiff"
     region, gcm = m["r"], m["g"] or NATIVE[m["r"]]
