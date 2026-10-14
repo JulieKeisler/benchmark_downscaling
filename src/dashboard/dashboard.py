@@ -984,6 +984,66 @@ def _center_image(path, max_width=720):
         unsafe_allow_html=True,
     )
 
+# ── Map grids (Spatial maps and inter-variable tabs) ────────────────────────
+MAP_SIZE_WIDTH = {"Small": 700, "Medium": 1000, "Large": 1400}   # px; else page width
+
+
+def _map_layout_controls(key: str):
+    """'Maps per row' and 'Size' widgets; returns (n_cols, st.pyplot width)."""
+    c1, c2 = st.columns(2)
+    with c1:
+        n_cols = st.select_slider("Maps per row", options=[1, 2, 3, 4, 5, 6], value=3,
+                                  key=f"{key}_per_row")
+    with c2:
+        size = st.select_slider("Size", options=["Small", "Medium", "Large", "Full width"],
+                                value="Full width", key=f"{key}_size")
+    return n_cols, MAP_SIZE_WIDTH.get(size, "stretch")
+
+
+def _render_map_grid(panels, *, cmap, vmin, vmax, cb_label, n_cols, width):
+    """Maps in one figure, `n_cols` per row, one shared colorbar.
+
+    panels: list of (title, lat, lon, 2-D array) on a regular lat/lon grid.
+    """
+    import matplotlib.pyplot as plt
+    try:
+        import cartopy.crs as ccrs
+        import cartopy.feature as cfeature
+    except ImportError:
+        ccrs, cfeature = None, None
+    n_cols = max(1, min(n_cols, len(panels)))
+    n_rows = -(-len(panels) // n_cols)
+    proj = ccrs.PlateCarree() if ccrs is not None else None
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(3.4 * n_cols + 1.0, 3.0 * n_rows + 0.3),
+        subplot_kw={"projection": proj} if proj else {},
+        squeeze=False, layout="constrained",
+    )
+    im, shown = None, []
+    for k, ax in enumerate(axes.ravel()):
+        if k >= len(panels):
+            ax.axis("off")
+            continue
+        title, lat, lon, arr = panels[k]
+        z = np.asarray(arr, dtype=float)
+        z = np.where(np.isfinite(z), z, np.nan)
+        im = ax.pcolormesh(lon, lat, z, cmap=cmap, vmin=vmin, vmax=vmax,
+                           **({"transform": proj} if proj is not None else {}))
+        if ccrs is not None:
+            ax.coastlines(linewidth=0.6)
+            ax.add_feature(cfeature.BORDERS, linewidth=0.4, linestyle="--")
+            ax.gridlines(draw_labels=False, linewidth=0.4, alpha=0.5, linestyle=":")
+            ax.set_extent([float(np.min(lon)), float(np.max(lon)),
+                           float(np.min(lat)), float(np.max(lat))], crs=ccrs.PlateCarree())
+        ax.set_title(title, fontsize=10 if n_cols <= 3 else 9)
+        shown.append(ax)
+    if im is not None:
+        fig.colorbar(im, ax=shown, shrink=0.85 if n_rows > 1 else 0.9, pad=0.02,
+                     label=cb_label, format="%.3g")
+    st.pyplot(fig, width=width)
+    plt.close(fig)
+
+
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 # Tab count/changes with selected region: widget states for removed tabs are
 # dropped automatically, so it's safe to build the tab list conditionally.
@@ -2086,15 +2146,9 @@ with tab_lines:
 # Tab 4 — Spatial maps
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_maps:
-    col1, col2, col3, col4 = st.columns([3, 3, 2, 2])
+    col1, col2, col3 = st.columns([3, 3, 4])
     with col3:
-        maps_per_row = st.select_slider("Maps per row", options=[1, 2, 3, 4, 5, 6], value=3,
-                                        key="maps_per_row")
-    with col4:
-        _map_size = st.select_slider("Size", options=["Small", "Medium", "Large", "Full width"],
-                                     value="Full width", key="map_size")
-    # Display width of each map figure: pixels, or the page width.
-    _map_width = {"Small": 700, "Medium": 1000, "Large": 1400}.get(_map_size, "stretch")
+        maps_per_row, _map_width = _map_layout_controls("maps")
     with col1:
         plot_type = st.selectbox(
             "Plot type",
@@ -2256,56 +2310,10 @@ with tab_maps:
                 hi = lo + 1.0
             zmin, zmax, cmap, zmid = lo, hi, "RdYlGn", None
 
-        def _render_cartopy_grid(methods, n_cols):
-            """All maps in one figure, `n_cols` per row, one shared colorbar."""
-            import matplotlib.pyplot as plt
-            try:
-                import cartopy.crs as ccrs
-                import cartopy.feature as cfeature
-            except ImportError:
-                ccrs, cfeature = None, None
-
-            def _add_geo(ax, lon, lat):
-                if ccrs is not None:
-                    ax.coastlines(linewidth=0.6)
-                    ax.add_feature(cfeature.BORDERS, linewidth=0.4, linestyle="--")
-                    ax.gridlines(draw_labels=False, linewidth=0.4, alpha=0.5, linestyle=":")
-                    ax.set_extent([lon.min(), lon.max(), lat.min(), lat.max()],
-                                  crs=ccrs.PlateCarree())
-
-            n_cols = max(1, min(n_cols, len(methods)))
-            n_rows = -(-len(methods) // n_cols)
-            proj = ccrs.PlateCarree() if ccrs is not None else None
-            fig, axes = plt.subplots(
-                n_rows, n_cols, figsize=(3.4 * n_cols + 1.0, 3.0 * n_rows + 0.3),
-                subplot_kw={"projection": proj} if proj else {},
-                squeeze=False, layout="constrained",
-            )
-            tr = ccrs.PlateCarree() if ccrs is not None else None
-            im = None
-            shown = []
-            for k, ax in enumerate(axes.ravel()):
-                if k >= len(methods):
-                    ax.axis("off")
-                    continue
-                m = methods[k]
-                d = maps_data[m]
-                z = np.asarray(d["arr"], dtype=float)
-                if not np.isfinite(z).all():
-                    z = np.where(np.isfinite(z), z, np.nan)
-                im = ax.pcolormesh(d["lon"], d["lat"], z, cmap=cmap,
-                                   vmin=zmin, vmax=zmax,
-                                   **({"transform": tr} if tr is not None else {}))
-                _add_geo(ax, d["lon"], d["lat"])
-                ax.set_title(mlabel(m), fontsize=10 if n_cols <= 3 else 9)
-                shown.append(ax)
-            if im is not None:
-                fig.colorbar(im, ax=shown, shrink=0.85 if n_rows > 1 else 0.9, pad=0.02,
-                             label=_cb_label, format="%.3g")
-            st.pyplot(fig, width=_map_width)
-            plt.close(fig)
-
-        _render_cartopy_grid(list(maps_data.keys()), maps_per_row)
+        _render_map_grid(
+            [(mlabel(m), d["lat"], d["lon"], d["arr"]) for m, d in maps_data.items()],
+            cmap=cmap, vmin=zmin, vmax=zmax, cb_label=_cb_label,
+            n_cols=maps_per_row, width=_map_width)
 
         if plot_type in ("delta_2040_2060", "delta_2080_2100"):
             st.caption("Δ signal = future − historical. Leftmost panel: GCM Δ reference. "
@@ -2393,35 +2401,39 @@ with tab_intervar:
     if not all_pairs:
         st.info("No inter-variable correlation maps found for this selection" + (" — run evaluate.py first." if DEV_NOTES else "."))
     else:
-        sel_pair = st.selectbox("Variable pair", all_pairs, key="iv_pair")
+        _c1, _c2 = st.columns([3, 4])
+        with _c1:
+            sel_pair = st.selectbox("Variable pair", all_pairs, key="iv_pair")
+        with _c2:
+            iv_per_row, iv_width = _map_layout_controls("iv_maps")
         v1, v2 = sel_pair.split("_", 1)
 
-        st.markdown("### ERA5 Reference (Ground Truth)")
-        for m in all_method_dirs:
-            era5_img = RESULTS_DIR / m / "plots" / f"intervar_corr_{v1}_{v2}_era5.png"
-            if era5_img.exists():
-                col_ref1, col_ref2, col_ref3 = st.columns([1, 2, 1])
-                with col_ref2:
-                    st.image(str(era5_img), width="stretch")
-                break
-
-        st.markdown("---")
-        st.subheader("Model Predictions")
-
-        cols_per_row = 2
-        for i in range(0, len(sel_methods), cols_per_row):
-            row_methods = sel_methods[i:i + cols_per_row]
-            # Fixed 2-slot row so every map keeps the same width; a lone trailing
-            # map stays half-width (second slot just stays empty).
-            cols = st.columns(cols_per_row)
-            for col, m in zip(cols, row_methods):
-                with col:
-                    st.markdown(f"**{mlabel(m)}**")
-                    img = RESULTS_DIR / m / "plots" / f"intervar_corr_{v1}_{v2}.png"
-                    if img.exists():
+        iv_data = {}
+        for m in sel_methods:
+            f = RESULTS_DIR / m / "plots" / f"intervar_corr_data_{v1}_{v2}.npz"
+            if f.exists():
+                try:
+                    iv_data[m] = dict(np.load(f))
+                except (OSError, ValueError):
+                    pass
+        if iv_data:
+            ref = next(iter(iv_data.values()))
+            panels = [("ERA5 (reference)", ref["lat"], ref["lon"], ref["era5_corr"])]
+            panels += [(mlabel(m), d["lat"], d["lon"], d["pred_corr"]) for m, d in iv_data.items()]
+            _render_map_grid(panels, cmap="RdBu_r", vmin=-1.0, vmax=1.0,
+                             cb_label=f"Pearson r ({v1}, {v2})",
+                             n_cols=iv_per_row, width=iv_width)
+            st.caption("First panel: ERA5 reference; then each method's prediction, "
+                       "all on the same −1 to +1 scale (2000–2020).")
+        else:
+            # Older results without the map data: the per-method images.
+            cols = st.columns(iv_per_row)
+            for k, m in enumerate(sel_methods):
+                img = RESULTS_DIR / m / "plots" / f"intervar_corr_{v1}_{v2}.png"
+                if img.exists():
+                    with cols[k % iv_per_row]:
+                        st.markdown(f"**{mlabel(m)}**")
                         st.image(str(img), width="stretch")
-                    else:
-                        st.info("No image available")
 
     # ── Energy events (Dunkelflaute / cold–calm spells) ──────────────────────
     st.markdown("---")
