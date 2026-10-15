@@ -391,7 +391,7 @@ METHOD_DOCS = {
         "name": "CorrDiff-QM",
         "type": "Neural · stochastic residual diffusion",
         "family": "neural",
-        "simple": "A regression U-Net predicts the mean; a diffusion model adds a random residual around it. One stochastic draw per day is scored, like a single realisation of the weather.",
+        "simple": "A regression U-Net predicts the mean; a diffusion model adds a random residual around it. One stochastic draw per day is scored, as a single realisation.",
         "detailed": "Mardani et al. 2025 (adapted). Stage 1: plain U-Net predicts the conditional mean from the coarsened ERA5 input + month. Stage 2: a DiffusersUNet denoises the residual with a cosine DDPM (T=1000). Both trained on ERA5 1980–1999 until a held-out validation loss stops improving (learning rate halved after 5 epochs without improvement, stop after 15). Inference: daily per-cell, per-month empirical quantile mapping of the GCM onto ERA5 on the coarse grid (fit 1980–1999; values outside the calibration range are held flat, so the mapping is not trend-preserving), bicubic upsampling, strided reverse sampling (50 steps); pr, sfcWind, sfcWindmax and rsds clipped at 0. The scored output is one seeded draw (seed 0); seeds 1–2 are kept to measure the spread.",
         "eq": r"\hat{y}_t = \mu_t + r_t,\quad r_t \sim p_\theta(r \mid x_t, \mu_t)",
         "grading": "Stochastic model, scored on a single seeded draw (full variance).",
@@ -491,7 +491,7 @@ METRIC_DOCS = {
         "name": "Temporal corr daily",
         "group": "vs GCM",
         "simple": "Pearson daily temporal correlation vs the bicubic-interpolated GCM over 2000–2100 (1 for bicubic by construction).",
-        "detailed": "Monotone per-cell corrections keep it close to 1; methods that inject noise or generate fine-scale detail lower it. A low value is not by itself an error, since the GCM's daily weather is not the target — prefer temporal corr annual for signal preservation.",
+        "detailed": "Monotone per-cell corrections keep it close to 1; methods that inject noise or generate fine-scale detail lower it. A low value is not by itself an error, since the GCM's individual days are not the target — prefer temporal corr annual for signal preservation.",
         "eq": "",
     },
     "annual_anomaly_bias": {
@@ -1211,12 +1211,12 @@ if _nav_scroll:
 with tab_welcome:
     st.markdown(
         "### 🎯 Welcome to the Downscaling Benchmark for the Electricity System\n"
-        "**The one-sentence version.** Climate impact studies for the energy sector need "
-        "fine-resolution, bias-corrected weather that global climate models do not provide — "
-        "**statistical downscaling** bridges that gap by learning a map from coarse GCM "
-        "fields to fine-resolution reanalysis-like fields. This dashboard is a benchmark "
-        "asking *how well different downscaling methods do it* — on the map and, crucially, "
-        "through the decisions the weather feeds in the power system."
+        "**In short.** Assessing how climate change will affect the electricity system "
+        "needs climate projections at a finer resolution than global climate models (GCMs) "
+        "provide. **Statistical downscaling** and bias adjustment correct the coarse GCM "
+        "fields against observations on a fine grid. This dashboard compares downscaling "
+        "methods three ways: against observations (ERA5, 2000–2020), against the change "
+        "the GCM projects (to 2100), and through a net-load forecasting model."
     )
     st.markdown(
         f"📦 Benchmark code, data recipes and this dashboard: "
@@ -1284,7 +1284,7 @@ with tab_welcome:
             "**Contents** · "
             "[1. What is a GCM?](#ww-sec1) · "
             "[2. ERA5 reanalysis](#ww-sec2) · "
-            "[3. Why the electricity system needs fine weather](#ww-sec3) · "
+            "[3. Why the electricity system needs fine-resolution data](#ww-sec3) · "
             "[4. What is statistical downscaling?](#ww-sec4) · "
             "[5. What this benchmark does](#ww-sec5) · "
             "[6. Why distribution metrics](#ww-sec6) · "
@@ -1302,8 +1302,8 @@ with tab_welcome:
             "system by solving the equations of physics on a three-dimensional grid that "
             "covers the whole Earth. To produce a century or more of simulation, it must be "
             "computationally tractable, so each grid cell is huge — typically ≈1–2.5° of "
-            "latitude/longitude, i.e. ~100–250 km across. Over a country-sized region "
-            "(France is ~1000 km across), that is only a handful to a dozen cells; a single "
+            "latitude/longitude, i.e. ~100–250 km across. Over the ~1500 km boxes of this "
+            "benchmark, that is 66 to 195 GCM cells, against ~3700 for ERA5; a single "
             "cell lumps together a city, its surrounding farmland and a mountain range. Each "
 "cell holds one value *per variable per day* — 2-m temperature, near-surface wind, "
              "precipitation, sea-level pressure, surface radiation.\n\n"
@@ -1313,12 +1313,13 @@ with tab_welcome:
              "valley-scale heatwave, no gusts at a specific wind-farm site, no convective "
              "storm cell — yet installed capacity and demand sit in places the grid cannot "
              "resolve.\n"
-             "- **No calendar.** A GCM is not a weather forecast; it is a physics-based "
-             "simulation that, due to the chaotic nature of the system, evolves unconstrained "
-             "by observations, so it is not tied to the calendar. It produces long sequences "
-             "of physically plausible weather, but there is no real \"15 January 2005\" that "
-             "its 15 January 2005 corresponds to. This dictates how we must evaluate "
-             "downscaling methods (see [6. Why distribution metrics](#ww-sec6)).\n"
+             "- **No calendar.** A GCM is not a weather forecast. It simulates a climate, "
+             "driven by external forcings (greenhouse gases, aerosols, solar activity) and "
+             "unconstrained by observations, so it is not synchronised with the observed "
+             "weather. In ERA5, 2003 is the hottest summer of 2000–2020 over the France "
+             "domain; in CNRM-CM6-1, the hottest is 2006 and 2003 ranks 14th of 21. Only "
+             "statistics over a period can be compared with observations. This dictates how "
+             "we must evaluate downscaling methods (see [6. Why distribution metrics](#ww-sec6)).\n"
              "- **Systematic biases.** Unresolved processes are approximated, so the outputs "
              "carry systematic biases — smoothed variability, shifted means, distorted "
              "extremes."
@@ -1345,7 +1346,7 @@ with tab_welcome:
         # ── Section 3: why the energy sector needs fine weather ─────────────
         st.markdown('<a id="ww-sec3"></a>', unsafe_allow_html=True)
         st.markdown(
-            "## 3 · Why does the electricity system need fine weather?\n"
+            "## 3 · Why does the electricity system need fine-resolution climate data?\n"
             "Unlike the GCM's ~250 km cells, the power system is planned and operated at "
             "the scale of cities, wind farms and transmission corridors. And weather is an "
             "*input* to almost every part of its operation:\n"
@@ -1361,7 +1362,7 @@ with tab_welcome:
             "balance in real time and what capacity planning must size for. Because it "
             "compounds the temperature sensitivity of demand *and* the wind/solar "
             "sensitivity of generation, it is exactly the object through which this "
-            "benchmark reveals how errors in the downscaled weather translate into "
+            "benchmark reveals how errors in the downscaled fields translate into "
             "operationally relevant errors (see [8. Downstream test](#ww-sec8)).\n\n"
             "### The practical barriers\n"
             "Using climate projections for such work is routinely blocked by documented, "
@@ -1378,8 +1379,8 @@ with tab_welcome:
         st.markdown('<a id="ww-sec4"></a>', unsafe_allow_html=True)
         st.markdown(
             "## 4 · What is statistical downscaling?\n"
-            "**Downscaling** turns a coarse GCM field into a fine-resolution weather-like "
-            "field on the grid, variables and daily scale an impact study needs, while "
+            "**Downscaling** turns a coarse GCM field into a fine-resolution field on the "
+            "grid, variables and daily scale an impact study needs, while "
             "respecting both the GCM's climate signal and the observed climate. Two "
             "philosophies scaffold the literature "
             "([Maraun et al., 2010](https://doi.org/10.1029/2009rg000314)):\n"
@@ -1581,31 +1582,24 @@ with tab_welcome:
             "balance in real time, and it is where errors in `tas` (demand), "
             "`sfcWind`/`sfcWindmax` (wind), and `psl`/`pr` (weather regimes, hydro) "
             "interact.\n\n"
-            "**The model.** A **Time series Additive Model (TAM)**: a regression spline in "
-            "season (`s(toy)`) interacting with temperature (`te(toy, rbf(temperature))`), "
-            "plus day-of-week, school/bank/Christmas-holiday dummies, and a smooth nonlinear "
-            "response to the weather inputs driving demand. Three spatial representations "
-            "are compared: **(1) Full Grid PCA** — the 15 leading PCA components of the "
-            "daily spatial field (57×65 grid, ≈80% of variance); **(2) Regional "
-            "Barycenters** — population-weighted weather for 12 sub-regions (15 regional PCs, ≈93% of variance); "
-            "**(3) Regional + Renewables** — the regional representation plus explicit wind "
-            "and solar resource indices. (The multi-region lenses apply to France; the other "
-            "regions ship the full-grid PCA.)\n\n"
-            "**The weather modeling.** The same TAM is trained once on **ERA5 reanalysis "
-            "weather (2012–2021)** plus the region's observed net demand (central US: from "
-            "July 2018, when its record starts). For evaluation it is never "
-            "retrained: each downscaled scenario simply substitutes the method's own "
-            "predictions (next-day temperature, wind, precipitation from the downscaled "
-            "`tas`, `sfcWind`, `sfcWindmax`, `pr`, `psl` fields, lagged one day) into the "
-            "already-fit model and produces a daily net-load forecast distribution. Any "
-            "downscaling error is therefore propagated through unchanged model weights — an "
-            "honest, apples-to-apples test of how the *input* weather drives the downstream "
-            "error.\n\n"
-            "**What we report.** For each method we compare its forecast-error *distribution* "
-            "to the ERA5-truth one with **KS distance, Wasserstein distance (MW), KL "
-            "divergence, and absolute errors at the extreme quantiles AE@q01 / AE@q99 (MW)** — "
-            "i.e. how badly a method misses the most costly (very low / very high net-load) "
-            "days. The tab offers error-bar "
+            "**The model.** A **Time series Additive Model (TAM)**, a generalised additive "
+            "model developed at EDF ([TAM v1.2.6](https://doi.org/10.5281/zenodo.21413636)). "
+            "It forecasts daily net demand from a trend, calendar effects (day of week, "
+            "holidays) and a seasonal spline. It also uses splines of the 15 leading principal "
+            "components of the daily fields of all variables on the 57×65 grid, and of their "
+            "regional means, including 3- and 7-day means of temperature.\n\n"
+            "**Training and use.** The principal components are fitted on ERA5 over "
+            "2000–2021. One model per region and set of variables is trained on ERA5 and the "
+            "region's observed net demand over 2012–2021 (central US: from July 2018, when its "
+            "record starts). It is then applied unchanged to every product over 2000–2022: "
+            "each product replaces ERA5 as input, day by day. Any downscaling error therefore "
+            "propagates through the same model — an apples-to-apples test of how the *input* "
+            "fields drive the downstream error.\n\n"
+            "**What we report.** For each product, we compare its net-load forecast "
+            "distribution with the ERA5-driven one: **KS distance, Wasserstein distance (MW), "
+            "KL divergence, and absolute errors at the 1st and 99th percentiles, AE@q01 / "
+            "AE@q99 (MW)** — the very low and very high net-load days that size reserves. "
+            "The tab offers error-bar "
             "comparisons, quantile-distortion plots, a radar per method, net-demand CDFs, and "
             "breakdowns by season and by wind level."
         )
@@ -2729,7 +2723,7 @@ if tab_load is not None:
                 st.markdown("---")
 
             # — TAM forecasts vs ERA5: daily net-demand forecast series (2000–2022)
-            # driven by each weather source through the same fixed downstream TAM.
+            # driven by each input dataset through the same fixed downstream TAM.
             fc_map = {
                 "Full Grid PCA": f"tam_forecasts_results{region_sfx}.npz",
                 "Regional Barycenters": f"tam_forecasts_regional{region_sfx}.npz",
@@ -2745,11 +2739,11 @@ if tab_load is not None:
                 _fc_dates = pd.to_datetime(_fc["dates"])
                 _fc_pred = np.asarray(_fc["pred"], dtype=float)[:, _fc_keep]
                 _fc_sel = st.multiselect(
-                    "Weather sources (TAM forecast series)", _fc_names,
+                    "Input data (TAM forecast series)", _fc_names,
                     default=_fc_names, key=f"tam_fc_src_{rep_choice}",
                     format_func=_tam_label,
                     help="Net-demand forecast from the same fixed TAM driven by each "
-                         "weather source. Actual = observed net demand; "
+                         "input dataset. Actual = observed net demand; "
                          "ERA5 = reference; methods = downscaled inputs.",
                 )
                 _fc_win = st.selectbox(

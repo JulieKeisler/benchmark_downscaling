@@ -86,7 +86,7 @@ def line_help(var: str, line_type: str) -> str:
             "bicubic-interpolated driving GCM (black) and each method (dashed) "
             "over 2000–2100. It shows whether a method keeps the observed level "
             "today and follows the GCM's long-term change; the GCM's individual "
-            "years are free-running weather, not a target. "
+            "years are not synchronised with observed years, so they are not a target. "
             f"Units: {vlabel(var)}."
         ),
         "cdf": (
