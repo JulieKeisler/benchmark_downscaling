@@ -22,7 +22,7 @@ from data_processing import bicubic_regrid
 
 def bicubic_downscale(gcm: xr.DataArray, obs: xr.DataArray,
                       variable: str) -> xr.DataArray:
-    """Cubic spline interpolation to the ERA5 grid. Stateless baseline."""
+    """Cubic convolution (Keys) interpolation to the ERA5 grid. Stateless baseline."""
     pred = bicubic_regrid(gcm, obs.lat.values, obs.lon.values)
     pred = pred.assign_coords(time=obs.time)
     if variable == "pr" or variable == "rsds":

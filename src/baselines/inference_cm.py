@@ -58,31 +58,19 @@ def _load_model(ckpt_path: Path):
     return model, stats
 
 
-def run(
+def prepare_inputs(
     era5_dir:    Path,
     gcm_dir:     Path,
-    ckpt_dir:    Path,
-    out_dir:     Path,
-    calib_start: int   = 1980,
-    eval_start:  int   = 2000,
-    eval_end:    int   = 2100,
-    scenario:    str   = "ssp370",
-    stroke_time: float = 0.5,
-    n_members:   int   = 1,
-    batch_size:  int   = 32,
-    seed:        int   = 0,
-) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    device    = "cuda" if torch.cuda.is_available() else "cpu"
-    ckpt_path = ckpt_dir / "best.pt"
-    if not ckpt_path.exists():
-        raise FileNotFoundError(
-            f"No checkpoint at {ckpt_path}. Run train_consistency.py first.")
+    stats:       dict,
+    windows:     list[tuple[int, int, int, int]],
+    load_end:    int,
+    calib_start: int = 1980,
+    scenario:    str = "ssp370",
+):
+    """Regridded, windowed-QDM-corrected and normalised GCM input for the kept years of `windows`.
 
-    model, stats = _load_model(ckpt_path)
-
+    Returns (x_in_norm [T, C, H, W], time, lat, lon).
+    """
     calib_end = calib_start + 19
     print(f"  [CM] loading ERA5+GCM calibration {calib_start}–{calib_end} ...", flush=True)
     _all = {}
@@ -97,12 +85,9 @@ def run(
     target_lat = ref_v.lat.values
     target_lon = ref_v.lon.values
 
-    # QDM in 20-y moving windows (Cannon et al. 2015): the GCM is
-    # read from eval_start - 5 so the first window (e.g. 1995-2014) is full.
-    windows = _sliding_windows(eval_start, eval_end, 20, 10, 5)
     load_start = min(w[0] for w in windows)
-    print(f"  [CM] loading GCM {load_start}–{eval_end} ...", flush=True)
-    gcm_eval = align_time({v: load_gcm(gcm_dir, v, load_start, eval_end, scenario)
+    print(f"  [CM] loading GCM {load_start}–{load_end} ...", flush=True)
+    gcm_eval = align_time({v: load_gcm(gcm_dir, v, load_start, load_end, scenario)
                             for v in VARIABLES})
 
     print("  [CM] bicubic regrid + windowed QDM + normalize ...", flush=True)
@@ -112,15 +97,23 @@ def run(
         gcm_cal_up  = bicubic_regrid(gcm_cal[var],  target_lat, target_lon)
         era5_cal_up = era5_cal[var]   # already at ERA5 grid
         gcm_eval_up = bicubic_regrid(gcm_eval[var], target_lat, target_lon)
-        # 2. QDM per cell, calendar month and window; keeps eval_start..eval_end
+        # 2. QDM per cell, calendar month and window; keeps the windows' keep years
         gcm_qdm     = qdm_windowed(gcm_eval_up, gcm_cal_up, era5_cal_up, var, windows)
         if x_in_norm is None:
             gcm_time = gcm_qdm.time
             x_in_norm = np.empty((gcm_time.size, N_VARS, len(target_lat), len(target_lon)),
                                  dtype=np.float32)
         x_in_norm[:, i] = encode(gcm_qdm.values.astype(np.float32), stats, var)
-    T, H, W = gcm_time.size, len(target_lat), len(target_lon)
+    return x_in_norm, gcm_time, target_lat, target_lon
 
+
+def denoise(
+    model, stats, x_in_norm, gcm_time, target_lat, target_lon, out_dir: Path,
+    device: str, stroke_time: float, n_members: int = 1, batch_size: int = 32, seed: int = 0,
+) -> None:
+    """Stroke guidance at t* on prepared inputs; writes the standard predictions to out_dir."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    T, H, W = gcm_time.size, len(target_lat), len(target_lon)
     months = gcm_time.dt.month.values.astype(np.float32)
     mc     = month_channels(months, (T, H, W))
 
@@ -142,6 +135,41 @@ def run(
         coords={"time": gcm_time, "lat": target_lat, "lon": target_lon},
     )
     save_predictions(torch.stack(arrays, dim=1), VARIABLES, out_dir, ref_da)
+
+
+def run(
+    era5_dir:    Path,
+    gcm_dir:     Path,
+    ckpt_dir:    Path,
+    out_dir:     Path,
+    calib_start: int   = 1980,
+    eval_start:  int   = 2000,
+    eval_end:    int   = 2100,
+    scenario:    str   = "ssp370",
+    stroke_time: float = 0.5,
+    n_members:   int   = 1,
+    batch_size:  int   = 32,
+    seed:        int   = 0,
+) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Seed before the model is built: the noise draws follow the same RNG state in every run.
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    device    = "cuda" if torch.cuda.is_available() else "cpu"
+    ckpt_path = ckpt_dir / "best.pt"
+    if not ckpt_path.exists():
+        raise FileNotFoundError(
+            f"No checkpoint at {ckpt_path}. Run train_consistency.py first.")
+
+    model, stats = _load_model(ckpt_path)
+
+    # QDM in 20-y moving windows (Cannon et al. 2015): the GCM is
+    # read from eval_start - 5 so the first window (e.g. 1995-2014) is full.
+    windows = _sliding_windows(eval_start, eval_end, 20, 10, 5)
+    x_in_norm, gcm_time, target_lat, target_lon = prepare_inputs(
+        era5_dir, gcm_dir, stats, windows, eval_end, calib_start, scenario)
+    denoise(model, stats, x_in_norm, gcm_time, target_lat, target_lon, out_dir, device,
+            stroke_time, n_members, batch_size, seed)
 
 
 def main():

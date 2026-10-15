@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bicubic baseline inference — cubic spline interpolation to ERA5 grid.
+"""Bicubic baseline inference — cubic convolution (Keys) interpolation to the ERA5 grid.
 
 No training required. Produces predictions.pt in physical units covering the
 full GCM evaluation period (default 2000–2100).

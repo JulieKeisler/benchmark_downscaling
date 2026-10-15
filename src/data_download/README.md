@@ -59,7 +59,8 @@ Notes:
 
 ### CESM2 ensemble members
 
-- historical: `r1i1p1f1`
+- historical: `r1i1p1f1` is the default download, but the benchmark uses `r4i1p1f1` in
+  both periods (one realisation; `load_gcm` refuses a mixed-member pair)
 - ssp370 / ssp245: only `r4i1p1f1` exists — the script auto-detects the member
   (falls back to a member-filter-free search, then keeps only the lowest-numbered member)
   when the configured one has no files. Before this was fixed (2026-09-23) the fallback

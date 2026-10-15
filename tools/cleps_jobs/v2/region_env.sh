@@ -29,8 +29,8 @@ if [ "$GCM" = cesm2 ]; then SCENARIO=ssp245; VARS="tas pr psl sfcWind rsds"
 else SCENARIO=ssp370; VARS="tas pr psl sfcWind sfcWindmax rsds"; fi
 # Derived products without a variant_label: CNRM sfcWind over Australia.
 ALLOW_UNLABELLED=""; [ "$REGION/$GCM" = australia/cnrm_cm6_1 ] && ALLOW_UNLABELLED="sfcWind"
-# CDS downloads without metadata (Julie, 2026-10-14): 9/12 bit-identical to the expected
-# member on Pangeo; ssp370 rsds unverified (ESGF down). Re-check when ESGF answers.
+# CDS downloads without metadata: all 12 bit-identical, every day, to the expected member
+# on ESGF (tools/check_cds_member.py, 2026-10-15); still allow-listed since unlabelled.
 case "$REGION/$GCM" in
   australia/ipsl_cm6a_lr|us_central/ipsl_cm6a_lr|us_central/cnrm_cm6_1) ALLOW_UNLABELLED="rsds sfcWindmax" ;;
 esac
