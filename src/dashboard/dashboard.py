@@ -241,17 +241,13 @@ _available_gcms_region = _available_gcms(_selected)
 if not _available_gcms_region:
     st.error(f"No GCM results found under {RESULTS_ROOT / _selected}")
     st.stop()
-# Reset the GCM choice to the region's native GCM when the region changes.
-# The widget key is "gcm": keeping its stale value would silently show a
-# factorial coupling (e.g. France × CNRM-CM6-1) whenever the previous region's
-# GCM also exists as a factorial subdir of the new region.
-if st.session_state.get("_gcm_region") != _selected:
-    st.session_state.pop("gcm", None)
-st.session_state["_gcm_region"] = _selected
+# One GCM widget per region: a new region starts on its own GCM. A single
+# shared key, reset by popping its state, left the browser showing the
+# previous region's GCM label while the page used another GCM's results.
 _selected_gcm = st.selectbox(
     "GCM", _available_gcms_region,
     format_func=lambda g: _gcm_label(g),
-    key="gcm",
+    key=f"gcm_{_selected}",
 )
 RESULTS_DIR = _coupling_dir(_selected, _selected_gcm)
 
@@ -2778,6 +2774,7 @@ if tab_load is not None:
                 _fc_sel = st.multiselect(
                     "Weather sources (TAM forecast series)", _fc_names,
                     default=_fc_names, key=f"tam_fc_src_{rep_choice}",
+                    format_func=_tam_label,
                     help="Net-demand forecast from the same fixed TAM driven by each "
                          "weather source. Actual = observed net demand; "
                          "ERA5 = reference; methods = downscaled inputs.",
