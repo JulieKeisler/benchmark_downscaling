@@ -230,10 +230,15 @@ if not experiments:
 _pending_region = st.session_state.pop("_pending_region", None)
 if _pending_region in experiments:
     st.session_state["experiment"] = _pending_region
+def _dismiss_search() -> None:
+    """Hide the search results; the query stays in the search box."""
+    st.session_state["search_dismissed"] = st.session_state.get("search_box", "").strip()
+
+
 _selected = st.selectbox(
     "Experiment / Region", experiments,
     format_func=lambda e: EXPERIMENT_LABELS.get(e, e),
-    key="experiment",
+    key="experiment", on_change=_dismiss_search,
 )
 
 # GCM selector — dependent on the chosen region.
@@ -247,7 +252,7 @@ if not _available_gcms_region:
 _selected_gcm = st.selectbox(
     "GCM", _available_gcms_region,
     format_func=lambda g: _gcm_label(g),
-    key=f"gcm_{_selected}",
+    key=f"gcm_{_selected}", on_change=_dismiss_search,
 )
 RESULTS_DIR = _coupling_dir(_selected, _selected_gcm)
 
@@ -878,8 +883,8 @@ def _search_stamp() -> tuple:
 
 
 def _on_search() -> None:
-    """New search: rebuild the tabs so the Search tab opens; drop any old #anchor."""
-    st.session_state["nav_count"] = st.session_state.get("nav_count", 0) + 1
+    """New search: show its results above the tabs; drop any old #anchor."""
+    st.session_state.pop("search_dismissed", None)
     st.session_state["clear_url_hash"] = True
 
 
@@ -1098,13 +1103,9 @@ def _tab_title(name: str) -> str | None:
 
 
 def _goto(tab: str, page: str, section: str, detail: bool = False) -> None:
-    """Search-result click: open the tab (and Welcome page), scroll to the section.
-
-    The Search tab stays open, so the results remain one click (or the
-    browser's Back button) away.
-    """
+    """Search-result click: hide the results, open the tab (and Welcome page), scroll to the section."""
+    _dismiss_search()
     st.session_state["nav_tab"] = _tab_title(tab)
-    st.session_state["nav_now"] = True
     st.session_state["nav_count"] = st.session_state.get("nav_count", 0) + 1
     if tab == "Welcome" and page:
         st.session_state["welcome_mode"] = page
@@ -1115,7 +1116,6 @@ def _goto(tab: str, page: str, section: str, detail: bool = False) -> None:
 
 def _close_search() -> None:
     st.session_state["search_box"] = ""
-    st.session_state["nav_count"] = st.session_state.get("nav_count", 0) + 1
     st.session_state["clear_url_hash"] = True
 
 
@@ -1133,22 +1133,7 @@ _JS_CLEAR_HASH = """<script>(() => {
   setTimeout(() => clearInterval(P.__dsClear), 20000);
 })();</script>"""
 
-# Back button: returning to the ?search= entry (no #anchor) re-opens the Search tab.
-_JS_BACK_TO_SEARCH = """<script>(() => {
-  const P = window.parent || window;
-  P.__dsDoc = document;
-  if (P.__dsBack) return;
-  P.__dsBack = true;
-  P.addEventListener('popstate', () => {
-    if (P.location.hash || !P.location.search.includes('search=')) return;
-    const tab = [...P.__dsDoc.querySelectorAll('[role="tab"]')]
-      .find(t => t.innerText.trim().startsWith('🔎'));
-    if (tab) { tab.click(); tab.scrollIntoView({block: 'start'}); }
-  });
-})();</script>"""
-
-# Result click: scroll to the section, open it if collapsed, and add a history
-# entry for it (#section) so that Back returns to the results.
+# Result click: scroll to the section and open it if collapsed.
 _JS_GOTO = """<script>(() => {
   const target = %s;
   const P = window.parent || window;
@@ -1174,44 +1159,30 @@ _JS_GOTO = """<script>(() => {
       hit.scrollIntoView({behavior: 'smooth', block: 'start'});
       hit.style.outline = '3px solid #f6c344';
       setTimeout(() => hit.style.outline = '', 2500);
-      const slug = norm(target).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'result';
-      try { P.history.pushState({dsResult: 1}, '', P.location.pathname + P.location.search + '#' + slug); } catch (e) {}
     }
     if (n > 40) clearInterval(t);
   }, 250);
 })();</script>"""
 
 
-# A search adds a "Search" tab, opened on top of the others. The tabs key
-# changes only on a new search, a result click or Close, so the tabs are
-# rebuilt on the chosen tab then; otherwise the user's own tab choice is kept.
+# A search shows its results in the page, above the tabs, until a result is
+# clicked, Close is pressed or the region/GCM changes. The tabs key changes only
+# on a result click, so the tabs are rebuilt on that result's tab; otherwise the
+# user's own tab choice is kept.
 _query = st.session_state.get("search_box", "").strip()
-# The URL carries the current search (?search=...), so a results page can be shared.
-if _query and st.query_params.get("search") != _query:
+_show_results = bool(_query) and st.session_state.get("search_dismissed") != _query
+# The URL carries the shown search (?search=...), so a results page can be shared.
+if _show_results and st.query_params.get("search") != _query:
     st.query_params["search"] = _query
-elif not _query and "search" in st.query_params:
+elif not _show_results and "search" in st.query_params:
     del st.query_params["search"]
-_search_title = ("🔎 Search: " + re.sub(r"[*_`~\[\]()#]", "", _query)) if _query else None
-_nav_tab = st.session_state.get("nav_tab")
-_nav_now = st.session_state.pop("nav_now", False)
-if _nav_now and _nav_tab in _tab_titles:
-    _default_tab = _nav_tab                      # a result was clicked
-elif _search_title:
-    _default_tab = _search_title                 # a new search
-else:
-    _default_tab = _nav_tab if _nav_tab in _tab_titles else None
-_all_tabs = st.tabs(
-    ([_search_title] if _search_title else []) + _tab_titles,
-    default=_default_tab,
-    key=f"main_tabs_{st.session_state.get('nav_count', 0)}")
-if _search_title:
-    tab_search, *_all_tabs = _all_tabs
-    with tab_search:
+if _show_results:
+    with st.container(border=True):
         _hits = search_index.search(_app_search_index(_search_stamp()), _query)
         _c1, _c2 = st.columns([8, 1])
         _c1.markdown(f"**{len(_hits) or 'No'} place{'s' if len(_hits) != 1 else ''}** "
                      f"in the dashboard match “{_query}”"
-                     + ("; click one to go there (this tab stays open)." if _hits else "."))
+                     + ("; click one to go there." if _hits else "."))
         _c2.button("Close", key="search_close", on_click=_close_search, width="stretch")
         for _i, _h in enumerate(_hits):
             _loc = " › ".join(x for x in (_h["tab"], _h["page"], _h["section"]) if x)
@@ -1221,7 +1192,9 @@ if _search_title:
                       args=(_h["tab"], _h["page"], _h["section"], _h["detail"]),
                       disabled=_tab_title(_h["tab"]) is None, width="stretch")
             _t.markdown(_h["snippet"].replace("$", "\\$") + _more)
-    st.html(_JS_BACK_TO_SEARCH, unsafe_allow_javascript=True)
+_nav_tab = st.session_state.get("nav_tab")
+_all_tabs = st.tabs(_tab_titles, default=_nav_tab if _nav_tab in _tab_titles else None,
+                    key=f"main_tabs_{st.session_state.get('nav_count', 0)}")
 tab_welcome, tab_table, tab_radar, tab_lines, tab_maps, tab_intervar, *tab_tail = _all_tabs
 tab_load = tab_tail[0] if tab_tail else None
 if st.session_state.pop("clear_url_hash", False):
