@@ -46,7 +46,7 @@ MOVER = "/lustre/fswork/projects/rech/bqu/uyv87oi/benchmark_downscaling/logs/v2/
 
 def ssh(host: str, cmd: str) -> str:
     return subprocess.run(["ssh", "-o", "ConnectTimeout=30", host, cmd], capture_output=True,
-                          text=True, timeout=120, check=True).stdout
+                          text=True, timeout=900, check=True).stdout
 
 
 def parse_time(s: str):
