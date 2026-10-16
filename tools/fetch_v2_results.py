@@ -26,6 +26,21 @@ ROOTS = {"jz": "/lustre/fswork/projects/rech/bqu/uyv87oi/benchmark_downscaling/r
          "cleps": "/scratch/jkeisler/benchmark_downscaling/results_v2"}
 DIRS = {"bicubic": "bicubic", "eqm": "eqm", "bcsd": "bcsd", "cdft": "cdft", "dotc": "dotc",
         "idownscale": "idownscale", "corrdiff": "corrdiff_qm", "cm": "cm", "sfc": "serpentflowclim"}
+# Result dirs in the benchmark's order, and the 9 GCM x region pairs (for the tools reading results/v2)
+RESULT_DIRS = [DIRS[m] for m, _ in vs.METHODS]
+PAIRS = [(r, g) for r in vs.REGIONS for g in vs.GCMS]
+_REPO = Path(__file__).resolve().parents[1]
+
+
+def sub(region: str, gcm: str) -> str:
+    """A region's own GCM sits at the region's top level, the other GCMs under <region>/<gcm>."""
+    return region if gcm == vs.NATIVE[region] else f"{region}/{gcm}"
+
+
+def era5_dir(region: str) -> Path:
+    import yaml
+    cfg = yaml.safe_load((_REPO / "src" / "configs" / "data" / "regions.yaml").read_text())
+    return _REPO / cfg["regions"][region]["era5_dir"]
 
 
 def finished_cells():
@@ -51,19 +66,19 @@ def main():
     done, latest = finished_cells()
     print(f"{len(done)} finished cells of {len(latest)} with a job")
     for (meth, region, gcm), j in sorted(done.items()):
-        sub = region if gcm == vs.NATIVE[region] else f"{region}/{gcm}"
-        src = f"{j['host']}:{ROOTS[j['host']]}/{sub}/{DIRS[meth]}/"
-        dst = out / sub / DIRS[meth]
+        rel = sub(region, gcm)
+        src = f"{j['host']}:{ROOTS[j['host']]}/{rel}/{DIRS[meth]}/"
+        dst = out / rel / DIRS[meth]
         dst.mkdir(parents=True, exist_ok=True)
-        # tail_dependence*.npz is computed locally (tools/tail_dependence.py): excluded, so kept
+        # computed locally (tools/tail_dependence.py, tools/energy_event_factors.py): excluded, so kept
         subprocess.run(["rsync", "-a", "--delete", "--exclude=predictions.pt", "--exclude=checkpoints/",
-                        "--exclude=*.pth", "--exclude=plots/tail_dependence*.npz", src, str(dst) + "/"],
-                       check=True)
+                        "--exclude=*.pth", "--exclude=plots/tail_dependence*.npz",
+                        "--exclude=plots/energy_event_*", src, str(dst) + "/"], check=True)
         if not (dst / "metrics.json").exists():
             raise SystemExit(f"{src}: finished job {j['id']} but no metrics.json")
-        print(f"  {sub}/{DIRS[meth]} <- {j['host']} job {j['id']}")
+        print(f"  {rel}/{DIRS[meth]} <- {j['host']} job {j['id']}")
     # dirs of cells that are not finished any more (re-submitted) must not stay
-    keep = {(region if gcm == vs.NATIVE[region] else f"{region}/{gcm}", DIRS[m]) for m, region, gcm in done}
+    keep = {(sub(region, gcm), DIRS[m]) for m, region, gcm in done}
     for mj in out.glob("**/metrics.json"):
         rel = mj.parent.relative_to(out)
         if (str(rel.parent), rel.name) not in keep:

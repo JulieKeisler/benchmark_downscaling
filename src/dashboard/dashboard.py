@@ -2765,6 +2765,154 @@ with tab_intervar:
                 )
                 st.plotly_chart(_f, width="stretch", key=f"event_{_evname}_{_stat}")
 
+        # ── Why these counts? (tools/energy_event_factors.py) ────────────────
+        try:
+            _fac = json.loads((RESULTS_DIR / "bicubic" / "plots" / "energy_event_factors.json").read_text())
+        except (OSError, ValueError):
+            _fac = None
+        if _fac is not None:
+            st.markdown("#### Why these counts?")
+            _ev_names = {"dunkelflaute": "Dunkelflaute", "cold_low_wind": "Cold & calm"}
+            _evk = st.radio("Event", list(_ev_names), format_func=_ev_names.get, horizontal=True,
+                            key="evf_event")
+            _va, _vb = _fac["meta"]["events"][_evk]
+            _low = {"sfcWind": "low-wind", "rsds": "low-solar", "tas": "cold"}
+            st.caption(
+                "The number of events is exactly the number of days × five factors: share of "
+                f"{_low[_va]} days × share of {_low[_vb]} days × **dependence** (how often both "
+                "happen on the same day, divided by what independence would give) × **share of "
+                "these joint days in spells** of 2 days or more ÷ **mean spell length**. Each "
+                "factor is shown relative to ERA5 (first row: ERA5's own values); multiplied, "
+                "they give the ratio of events in the last column. Red = this factor gives more "
+                "events than in ERA5, blue = fewer."
+            )
+            _fe = _fac["events"][_evk]
+            _rows = [m for m in sorted(sel_methods, key=lambda m: m != "bicubic")
+                     if m in _fe["methods"]]
+            # the factors are precomputed: a cell fetched again since must not disagree with the bars
+            _stale = [m for m in _rows
+                      if ((plot_data.get(m) or {}).get("_events") or {}).get(_evk, {}).get(
+                          "count", {}).get("pred") != _fe["methods"][m]["pred"]["events"]]
+            if _stale:
+                st.warning("Factors out of date for " + ", ".join(mlabel(m) for m in _stale)
+                           + (" — rerun tools/energy_event_factors.py." if DEV_NOTES else "."))
+                _rows = [m for m in _rows if m not in _stale]
+            _cols_fac = [f"{_low[_va]} days", f"{_low[_vb]} days", "dependence",
+                         "joint days in spells", "÷ spell length", "= events"]
+
+            def _rel(p, e):
+                def r(a, b):
+                    return a / b if a is not None and b else None
+                ev = r(p["events"], e["events"])
+                return [r(p["p_a"], e["p_a"]), r(p["p_b"], e["p_b"]),
+                        r(p["dependence"], e["dependence"]),
+                        r(p["spell_share"], e["spell_share"]),
+                        r(e["mean_length"], p["mean_length"]), ev]
+
+            _E = _fe["era5"]
+            _z = [[0.0] * 6]
+            _txt = [[f"{100 * _E['p_a']:.0f}%", f"{100 * _E['p_b']:.0f}%", f"{_E['dependence']:.2f}",
+                     f"{100 * _E['spell_share']:.0f}%" if _E["spell_share"] is not None else "—",
+                     f"{_E['mean_length']:.1f} d" if _E["mean_length"] else "—", f"{_E['events']}"]]
+            _hov = [[f"ERA5 · {c}" for c in _cols_fac]]
+            _abs_keys = ["p_a", "p_b", "dependence", "spell_share", "mean_length", "events"]
+            for m in _rows:
+                p_, e_ = _fe["methods"][m]["pred"], _fe["methods"][m]["era5"]
+                rel = _rel(p_, e_)
+                # log scale; 0 (no event) floored so it shows as the strongest blue
+                _z.append([np.log2(max(x, 1 / 8)) if x is not None else np.nan for x in rel])
+                _txt.append([(f"×{x:.2f}" if x is not None else "—") for x in rel[:5]]
+                            + [f"×{rel[5]:.2f} ({p_['events']})" if rel[5] is not None
+                               else f"({p_['events']})"])
+                _hov.append([f"{mlabel(m)} · {c}: {p_[k]:.3g} (ERA5 {e_[k]:.3g})"
+                             if p_[k] is not None and e_[k] is not None else f"{mlabel(m)} · {c}: —"
+                             for c, k in zip(_cols_fac, _abs_keys)])
+            _ylab = ["ERA5"] + [("GCM (bicubic)" if m == "bicubic" else mlabel(m)) for m in _rows]
+            _l3 = float(np.log2(3))
+            _fh = go.Figure(go.Heatmap(
+                z=_z, x=_cols_fac, y=_ylab, text=_txt, texttemplate="%{text}",
+                hovertext=_hov, hoverinfo="text", colorscale="RdBu_r", zmid=0, zmin=-_l3, zmax=_l3,
+                xgap=2, ygap=2,
+                colorbar=dict(title="vs ERA5", tickvals=[-_l3, -1, 0, 1, _l3],
+                              ticktext=["÷3", "÷2", "×1", "×2", "×3"]),
+            ))
+            _fh.update_layout(height=60 + 34 * len(_ylab), margin=dict(t=30, b=10, l=10, r=10),
+                              yaxis=dict(autorange="reversed"), xaxis=dict(side="top"))
+            st.plotly_chart(_fh, width="stretch", key=f"evf_table_{_evk}")
+
+            # Day-by-day view of the two variables, ERA5 against one source
+            try:
+                with np.load(RESULTS_DIR / "bicubic" / "plots" / "energy_event_series.npz") as _z_npz:
+                    _ser = {k: _z_npz[k] for k in _z_npz.files}
+            except (OSError, ValueError, zipfile.BadZipFile):
+                _ser = None
+            if _ser is not None and _rows:
+                _sc = st.columns([3, 3])
+                with _sc[0]:
+                    _src_m = st.selectbox(
+                        "Compare ERA5 with", _rows,
+                        format_func=lambda m: "GCM (bicubic)" if m == "bicubic" else mlabel(m),
+                        key="evf_src")
+                _seasons = {"Nov–Feb": (11, 12, 1, 2), "May–Aug": (5, 6, 7, 8),
+                            "All year": tuple(range(1, 13))}
+                with _sc[1]:
+                    _season = st.radio("Season", list(_seasons), horizontal=True,
+                                       index=1 if _selected == "australia" else 0, key="evf_season")
+                # the thresholds behind this source's count: ERA5 percentiles on its dates
+                _ta, _tb = (_fe["methods"][_src_m].get("thresholds")
+                            or [_fac["meta"]["thresholds"][_va], _fac["meta"]["thresholds"][_vb]])
+                _unit = {"sfcWind": "m/s", "rsds": "W/m²", "tas": "K"}
+                _src_dates = np.asarray(_ser[f"{_src_m}|date"])
+
+                def _pick(src):
+                    d = np.asarray(_ser[f"{src}|date"])
+                    k = np.isin((d // 100) % 100, _seasons[_season])
+                    if src == "era5":
+                        k &= np.isin(d, _src_dates)
+                    return np.asarray(_ser[f"{src}|{_va}"])[k], np.asarray(_ser[f"{src}|{_vb}"])[k]
+
+                _src_lab = "GCM (bicubic)" if _src_m == "bicubic" else mlabel(_src_m)
+                _fs = go.Figure()
+                _stats = []
+                for src, lab, col, op in (("era5", "ERA5", "#444444", 0.3),
+                                          (_src_m, _src_lab, _method_color(_src_m), 0.6)):
+                    a, b = _pick(src)
+                    la, lb = a < _ta, b < _tb
+                    joint = la & lb
+                    with np.errstate(invalid="ignore", divide="ignore"):
+                        dep = joint.mean() / (la.mean() * lb.mean())
+                    _stats.append((lab, int(joint.sum()), a.size, dep,
+                                   float(np.corrcoef(a, b)[0, 1]) if a.size > 2 else float("nan")))
+                    _fs.add_trace(go.Scattergl(x=a, y=b, mode="markers", name=lab,
+                                               marker=dict(size=4, color=col, opacity=op)))
+                _fs.add_shape(type="rect", xref="x", yref="y", layer="below", line_width=0,
+                              x0=-1e9, x1=_ta, y0=-1e9, y1=_tb, fillcolor="rgba(70,110,200,0.10)")
+                _fs.add_vline(x=_ta, line_dash="dash", line_width=1, line_color="#666")
+                _fs.add_hline(y=_tb, line_dash="dash", line_width=1, line_color="#666")
+                _xs = np.concatenate([_pick(s)[0] for s in ("era5", _src_m)])
+                _ys = np.concatenate([_pick(s)[1] for s in ("era5", _src_m)])
+
+                def _pad(v):
+                    return (float(np.nanmin(v)) - 0.03 * np.ptp(v),
+                            float(np.nanmax(v)) + 0.03 * np.ptp(v))
+                _fs.update_layout(
+                    height=480, margin=dict(t=30, b=40, l=10, r=10),
+                    xaxis=dict(title=f"{_va} region mean ({_unit[_va]})", range=_pad(_xs)),
+                    yaxis=dict(title=f"{_vb} region mean ({_unit[_vb]})", range=_pad(_ys)),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0),
+                )
+                st.plotly_chart(_fs, width="stretch", key=f"evf_scatter_{_evk}")
+                (l0, j0, n0, d0, r0), (l1, j1, n1, d1, r1) = _stats
+                st.caption(
+                    f"{_season} days, 2000–2020. Dashed lines: the ERA5 20th percentiles; the "
+                    f"shaded box holds the joint days ({_low[_va]} and {_low[_vb]}): "
+                    f"**{l0} {j0}** of {n0} days, **{l1} {j1}** of {n1}. Their number depends on "
+                    "how many days fall below each line and on the dependence, here "
+                    f"**{l0} ×{d0:.2f}**, **{l1} ×{d1:.2f}** of what independence would give in "
+                    "this season; the table above separates the two. Correlation over all the "
+                    f"season's days: {l0} {r0:+.2f}, {l1} {r1:+.2f}."
+                )
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 6 — Load Forecasting (TAM). Region-aware: france has the full set of
 # spatial-representation fixture files; us_central currently ships the

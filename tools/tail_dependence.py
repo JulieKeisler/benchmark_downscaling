@@ -37,12 +37,13 @@ from scipy.stats import rankdata
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src" / "evaluation"))
-sys.path.insert(0, str(ROOT / "paper" / "scripts"))
+sys.path.insert(0, str(ROOT / "tools"))
 from data_processing import load_era5  # noqa: E402
-from cells import ERA5, METHODS, cells, sub, variables  # noqa: E402
+from fetch_v2_results import PAIRS, RESULT_DIRS as METHODS, era5_dir, sub  # noqa: E402
 
 CROPS = ROOT / "results" / "v2_tam"
 OUT = ROOT / "results" / "v2"
+VARIABLES = ["tas", "pr", "psl", "sfcWind", "sfcWindmax", "rsds"]   # key order of the maps
 QS = (10, 20)
 PARTS = ("low", "high", "full")
 YEARS = (2000, 2020)
@@ -52,7 +53,7 @@ DRY_MM = 1.0        # ETCCDI wet-day threshold, mm/day
 def load_source(reg: str, gcm: str, src: str, vars_: list[str]) -> tuple[dict, np.ndarray, np.ndarray]:
     """{var: [T, H, W] float32}, lat, lon over YEARS."""
     if src == "era5":
-        das = {v: load_era5(ERA5[reg], v, *YEARS) for v in vars_}
+        das = {v: load_era5(era5_dir(reg), v, *YEARS) for v in vars_}
         lat, lon = das[vars_[0]].lat.values, das[vars_[0]].lon.values
         return {v: da.values.astype(np.float32) for v, da in das.items()}, lat, lon
     d = CROPS / sub(reg, gcm) / src
@@ -109,9 +110,10 @@ def save(path: Path, maps: dict) -> None:
 
 
 def main() -> None:
-    wanted = [tuple(a.split(":")) for a in sys.argv[1:]] or cells()
+    wanted = [tuple(a.split(":")) for a in sys.argv[1:]] or PAIRS
     for reg, gcm in wanted:
-        vars_ = variables(gcm)
+        saved = set(np.load(CROPS / sub(reg, gcm) / "bicubic" / "variables.npy", allow_pickle=True))
+        vars_ = [v for v in VARIABLES if v in saved]      # CESM2 has no sfcWindmax
         era5, lat, lon = load_source(reg, gcm, "era5", vars_)
         thresholds = {(v, q): (np.percentile(era5[v], q, axis=0), np.percentile(era5[v], 100 - q, axis=0))
                       for v in vars_ for q in QS}
