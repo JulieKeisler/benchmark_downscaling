@@ -24,10 +24,11 @@ Pipeline (all stages identical to the reference implementation):
   train   UNetFlow(C_in=6, C_out=6, static_dim=4, num_doy=365, ERA5 cfg),
           400 epochs, batch 64, lr 2e-4, EMA decay 0.999.
   infer   8-member dopri5 ODE ensemble over the conditioning tensor;
-          reconstruct physical units with the conditioning tensor's channel
-          z-score stats (exact global inverse of the normalization the dataset
-          applies at inference -- not the as-submitted self-referential
-          denormalize), reinject the CDF-t-corrected GCM climatology for tas,
+          reconstruct physical units with the TRAINING TARGET's channel z-score
+          stats: the model outputs in the target's normalized space, so this is
+          the exact global inverse (Haidar's exact_global_inverse; decoding with
+          the conditioning tensor's stats shrank every deviation from the domain
+          mean by sd_cond/sd_target), reinject the CDF-t-corrected GCM climatology for tas,
           clip non-negative pr/sfcWind/sfcWindmax/rsds, save_predictions.
 
 Physical units throughout: tas K, pr mm/day, sfcWind*/sfcWind m/s, psl Pa,
@@ -205,9 +206,8 @@ class SFT:
                    self.prep_dir / "clim_tas_cdft3.pt")
         print(f"tas climatology reinjection term: {tuple(clim_tas.shape)}", flush=True)
 
-        # ---- reconstruction reference: channel z-score stats of the CONDITIONING
-        # tensor (input=target=cond at inference, so exact_global_inverse undoes
-        # the very normalization SerpentFlowDataset applies on load) ----
+        # ---- channel stats of the conditioning tensor, for the record only: the
+        # output is decoded with the training target's stats (_decode_stats) ----
         cond_stats = compute_norm_stats(cond_t, self.variables)
         (self.prep_dir / "cond_stats.json").write_text(json.dumps(cond_stats, indent=2))
         print("conditioning channel stats (for reconstruction): "
@@ -268,7 +268,7 @@ class SFT:
 
     def infer(self, device: str, n_ensemble: int = N_ENSEMBLE) -> None:
         t0 = time.time()
-        stats = json.loads((self.prep_dir / "cond_stats.json").read_text())
+        stats = self._decode_stats()
         n_ch = len(self.variables)
 
         m = model.UNetFlow(C_in=n_ch, C_out=n_ch, static_dim=4, num_doy=365,
@@ -334,7 +334,7 @@ class SFT:
         Averaging members deflates the variance of a stochastic generator, so the
         benchmark scores single members; the cache comes from the infer phase.
         """
-        stats = json.loads((self.prep_dir / "cond_stats.json").read_text())
+        stats = self._decode_stats()
         z = torch.load(self.prep_dir / f"inference_ensemble{member}.pt",
                        map_location="cpu", weights_only=False)
         self._save(self._reconstruct(z, stats), out_dir)
@@ -342,11 +342,19 @@ class SFT:
 
     # ── reconstruction & save ───────────────────────────────────────────────
 
+    def _decode_stats(self) -> dict:
+        """Channel z-score stats of the training target, which define the space the
+        model outputs in (SerpentFlowDataset normalizes the target with them)."""
+        path = self.prep_dir / "target_stats.json"
+        if not path.exists():
+            tgt = torch.load(self.prep_dir / "train_target.pt", map_location="cpu")
+            path.write_text(json.dumps(compute_norm_stats(tgt, self.variables), indent=2))
+        return json.loads(path.read_text())
+
     def _reconstruct(self, z: torch.Tensor, stats: dict) -> torch.Tensor:
-        """Physical units from the normalized ODE output (exact global inverse
-        of the conditioning-tensor channel z-score -- the normalization the
-        dataset applies at inference, input=target=cond -- plus the
-        CDF-t-corrected GCM climatology reinjection for tas)."""
+        """Physical units from the normalized ODE output (exact global inverse of
+        the training target's channel z-score, plus the CDF-t-corrected GCM
+        climatology reinjection for tas)."""
         out = torch.zeros_like(z)
         v0 = self.variables[0]
         for c, var in enumerate(self.variables):
