@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -1028,10 +1029,11 @@ def _map_layout_controls(key: str):
     return n_cols, MAP_SIZE_WIDTH.get(size, "stretch")
 
 
-def _render_map_grid(panels, *, cmap, vmin, vmax, cb_label, n_cols, width):
+def _render_map_grid(panels, *, cmap, vmin, vmax, cb_label, n_cols, width, cb_ticks=None):
     """Maps in one figure, `n_cols` per row, one shared colorbar.
 
     panels: list of (title, lat, lon, 2-D array) on a regular lat/lon grid.
+    cb_ticks: optional {value: label} for the colorbar (e.g. ratios on a log scale).
     """
     import matplotlib.pyplot as plt
     try:
@@ -1066,8 +1068,10 @@ def _render_map_grid(panels, *, cmap, vmin, vmax, cb_label, n_cols, width):
         ax.set_title(title, fontsize=10 if n_cols <= 3 else 9)
         shown.append(ax)
     if im is not None:
-        fig.colorbar(im, ax=shown, shrink=0.85 if n_rows > 1 else 0.9, pad=0.02,
-                     label=cb_label, format="%.3g")
+        cb = fig.colorbar(im, ax=shown, shrink=0.85 if n_rows > 1 else 0.9, pad=0.02,
+                          label=cb_label, format="%.3g")
+        if cb_ticks:
+            cb.set_ticks(list(cb_ticks), labels=list(cb_ticks.values()))
     st.pyplot(fig, width=width)
     plt.close(fig)
 
@@ -2564,6 +2568,132 @@ with tab_intervar:
                     with cols[k % iv_per_row]:
                         st.markdown(f"**{mlabel(m)}**")
                         st.image(str(img), width="stretch")
+
+    # ── Dependence in the tails (tools/tail_dependence.py) ───────────────────
+    st.markdown("---")
+    st.subheader("Dependence in the tails")
+    st.caption(
+        "Do two variables reach their low or high values together? Choose a part of the "
+        "distribution for each variable. **Low** = at or below the ERA5 10th/20th percentile "
+        "of the grid cell (2000–2020), **high** = above the 90th/80th, **full** = all days; "
+        "the same ERA5 thresholds are used for every source, so a tail is the same physical "
+        "event everywhere. **Tail × tail**: co-occurrence ratio, how often both happen on "
+        "the same day divided by how often they would if they were independent (1 = "
+        "independent, below 1 = rarely together, above 1 = often together); dividing by each "
+        "source's own tail frequency leaves only the dependence. **Tail × full**: the mean "
+        "percentile of the full variable on the tail days of the other (50 = no relation). "
+        "**Full × full**: Spearman rank correlation. For pr, **dry** (< 1 mm/day) replaces "
+        "the low tail: the ERA5 low percentiles of daily pr are 0 in most cells, and most days "
+        "are dry, so ratios with dry days stay close to 1."
+    )
+    _td_era5 = RESULTS_DIR / "bicubic" / "plots" / "tail_dependence_era5.npz"
+    if not _td_era5.exists():
+        st.info("No tail-dependence maps for this selection"
+                + (" — run tools/tail_dependence.py." if DEV_NOTES else "."))
+    else:
+        _parts = ["low", "high", "full"]
+        _c = st.columns([2, 1.3, 2, 1.3, 1.2])
+        with _c[0]:
+            _tx = st.selectbox("Variable X", all_vars, index=0, key="td_x")
+        def _part_label(var):
+            return lambda p: "dry (< 1 mm/day)" if (var == "pr" and p == "low") else p
+        with _c[1]:
+            _px = st.selectbox("Part of X", _parts, index=0, key="td_px",
+                               format_func=_part_label(_tx))
+        with _c[2]:
+            _ty = st.selectbox("Variable Y", all_vars,
+                               index=min(1, len(all_vars) - 1), key="td_y")
+        with _c[3]:
+            _py = st.selectbox("Part of Y", _parts, index=0, key="td_py",
+                               format_func=_part_label(_ty))
+        with _c[4]:
+            _q = st.selectbox("Tail", ["20%", "10%"], key="td_q")
+        _cc = st.columns([3, 4])
+        with _cc[0]:
+            _td_mode = st.radio("Show", ["Values", "Difference to ERA5"], horizontal=True,
+                                key="td_mode")
+        with _cc[1]:
+            td_per_row, td_width = _map_layout_controls("td_maps")
+        def _td_load(f):
+            try:
+                return np.load(f)
+            except (OSError, ValueError, zipfile.BadZipFile):   # missing or being rewritten
+                return None
+        _era5_maps = _td_load(_td_era5)
+        if _tx == _ty:
+            st.warning("Choose two different variables.")
+        elif _era5_maps is None:
+            st.info("The tail-dependence maps could not be read; try again in a minute.")
+        else:
+            _q_n = _q.rstrip("%")
+            # maps are stored once per unordered pair, in the benchmark's variable order
+            if f"{_tx}|{_ty}|spearman" in _era5_maps.files:
+                _a, _b, _pa, _pb = _tx, _ty, _px, _py
+            else:
+                _a, _b, _pa, _pb = _ty, _tx, _py, _px
+            if _pa == _pb == "full":
+                _key, _kind = f"{_a}|{_b}|spearman", "rho"
+            else:
+                _key = f"{_a}|{_b}|{_q_n}|{_pa}|{_pb}"
+                _kind = "ratio" if "full" not in (_pa, _pb) else "pct"
+            if _key not in _era5_maps.files:
+                st.info("This combination is not available for this region and GCM.")
+            else:
+                def _td_val(arr):
+                    z = np.asarray(arr, dtype=float)
+                    if _kind == "ratio":       # log2: 0 = independent, ±1 = ×2 / ÷2
+                        # 0 = never together: floored to show as the strongest blue, not as missing
+                        z = np.log2(np.maximum(z, 2.0 ** -4))
+                    return z
+                _lat = np.load(RESULTS_DIR / "bicubic" / "lat.npy")
+                _lon = np.load(RESULTS_DIR / "bicubic" / "lon.npy")
+                _ref_raw = np.asarray(_era5_maps[_key], dtype=float)
+                _ref = _td_val(_ref_raw)
+                _src = []
+                for m in sorted(sel_methods, key=lambda m: m != "bicubic"):
+                    _mm = _td_load(RESULTS_DIR / m / "plots" / "tail_dependence.npz")
+                    if _mm is not None and _key in _mm.files:
+                        _raw = np.asarray(_mm[_key], dtype=float)
+                        _src.append((("GCM (bicubic)" if m == "bicubic" else mlabel(m)),
+                                     _td_val(_raw), _raw))
+                _fmt = {"ratio": lambda z: f"×{np.nanmedian(z):.2f}",
+                        "pct": lambda z: f"{np.nanmedian(z):.0f}",
+                        "rho": lambda z: f"{np.nanmedian(z):+.2f}"}[_kind]
+                if _td_mode == "Values":
+                    panels = [(f"ERA5 (median {_fmt(_ref_raw)})", _lat, _lon, _ref)]
+                    panels += [(f"{lab} ({_fmt(raw)})", _lat, _lon, z) for lab, z, raw in _src]
+                    _vmin, _vmax, _cb = {
+                        "ratio": (-2.0, 2.0, "co-occurrence ratio, log scale (×1 = independent)"),
+                        "pct": (25.0, 75.0, "mean percentile of the full variable on the tail days"),
+                        "rho": (-1.0, 1.0, f"Spearman ρ ({_tx}, {_ty})")}[_kind]
+                    _ticks = ({-2: "×¼", -1: "×½", 0: "×1", 1: "×2", 2: "×4"}
+                              if _kind == "ratio" else None)
+                elif _kind == "ratio":
+                    # log scale fixed at ÷4..×4: cells with a handful of tail days saturate
+                    # instead of stretching the scale
+                    panels = [(f"{lab} ÷ ERA5", _lat, _lon, z - _ref) for lab, z, _ in _src]
+                    _vmin, _vmax = -2.0, 2.0
+                    _cb = "co-occurrence ratio relative to ERA5, log scale"
+                    _ticks = {-2: "÷4", -1: "÷2", 0: "same", 1: "×2", 2: "×4"}
+                else:
+                    _ticks = None
+                    panels = [(f"{lab} − ERA5", _lat, _lon, z - _ref) for lab, z, _ in _src]
+                    _d = np.concatenate([np.abs(z - _ref)[np.isfinite(z - _ref)].ravel()
+                                         for _, z, _ in _src]) if _src else np.array([1.0])
+                    _vmax = max(float(np.nanpercentile(_d, 95)), 1e-3) if _d.size else 1.0
+                    _vmin = -_vmax
+                    _cb = {"pct": "difference in mean percentile",
+                           "rho": "difference in Spearman ρ"}[_kind]
+                if not panels:
+                    st.info("No method with tail-dependence maps is selected.")
+                else:
+                    _render_map_grid(panels, cmap="RdBu_r", vmin=_vmin, vmax=_vmax, cb_label=_cb,
+                                     n_cols=td_per_row, width=td_width, cb_ticks=_ticks)
+                    st.caption(f"{_part_label(_tx)(_px)} {_tx} × {_part_label(_ty)(_py)} {_ty}, "
+                               + (f"tail = {_q}, " if _kind != "rho" else "")
+                               + "2000–2020. Panel titles give the domain median. "
+                               "For tail × tail, blue/red = less/more often together than if "
+                               "independent; cells with very few tail days saturate the scale.")
 
     # ── Energy events (Dunkelflaute / cold–calm spells) ──────────────────────
     st.markdown("---")

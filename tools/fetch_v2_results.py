@@ -55,8 +55,10 @@ def main():
         src = f"{j['host']}:{ROOTS[j['host']]}/{sub}/{DIRS[meth]}/"
         dst = out / sub / DIRS[meth]
         dst.mkdir(parents=True, exist_ok=True)
+        # tail_dependence*.npz is computed locally (tools/tail_dependence.py): excluded, so kept
         subprocess.run(["rsync", "-a", "--delete", "--exclude=predictions.pt", "--exclude=checkpoints/",
-                        "--exclude=*.pth", src, str(dst) + "/"], check=True)
+                        "--exclude=*.pth", "--exclude=plots/tail_dependence*.npz", src, str(dst) + "/"],
+                       check=True)
         if not (dst / "metrics.json").exists():
             raise SystemExit(f"{src}: finished job {j['id']} but no metrics.json")
         print(f"  {sub}/{DIRS[meth]} <- {j['host']} job {j['id']}")
