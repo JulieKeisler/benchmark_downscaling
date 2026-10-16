@@ -1812,9 +1812,10 @@ with tab_table:
             "bicubic scores perfectly on them by construction. Daily temporal correlation is "
             "lowered by any method that injects noise or generates detail; prefer *temporal "
             "corr annual* for signal preservation.  \n"
-            "**BCSD**: its empirical quantile map holds values flat outside the 1980–1999 "
-            "range, so it distorts the year-to-year evolution and caps the long-term change "
-            "(largest annual-anomaly and Δ-signal errors for tas and psl)."
+            "**EQM (no detrending)**: its empirical quantile map holds values flat outside "
+            "the 1980–1999 range, so it distorts the year-to-year evolution of tas and caps "
+            "its long-term change (largest tas annual-anomaly and Δ-signal errors). BCSD "
+            "removes the GCM's temperature change before the map and keeps it."
         )
     else:
         st.info("No data for the selected filters.")
