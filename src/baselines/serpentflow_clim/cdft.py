@@ -208,13 +208,16 @@ def cdft_with_dry_days(DataGp, ObsRp, DataGf, wet_threshold: float = 1.0, clip_m
     return out
 
 
+# Wind: scale=1 (additive pre-alignment), as in Haidar's reference. scale=0 over-corrects the
+# conditioning climatology where the GCM wind is too weak (cell errors up to 2.5 m/s over
+# Australia and the central US under IPSL), and the generated wind with it.
 CDFT3_CONFIG = {
-    "sfcWind": dict(scale=0, pui=1, dev=2, npas=300, clip_min=0.0),
+    "sfcWind": dict(scale=1, pui=1, dev=2, npas=300, clip_min=0.0),
     "tas": dict(),  # unbounded variable: no clip_min / dry-day handling needed
     "pr": dict(use_dry_day_correction=True, wet_threshold=0.1, use_ssr=True,
                ssr_rezero=False, ssr_seed=0, scale=0, pui=0.5),
     # Benchmark environment additions (all-6-variable port):
-    "sfcWindmax": dict(scale=0, pui=1, dev=2, npas=300, clip_min=0.0),
+    "sfcWindmax": dict(scale=1, pui=1, dev=2, npas=300, clip_min=0.0),
     # psl (GCM "msl" climatology analog): mean-bias additive correction, no clip.
     "psl": dict(scale=1, pui=1, dev=2, npas=300),
     # rsds: non-negative radiative flux, additive mean correction, physical clip at 0.

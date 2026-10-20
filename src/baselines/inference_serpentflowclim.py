@@ -266,7 +266,7 @@ class SFT:
 
     # ── infer ────────────────────────────────────────────────────────────────
 
-    def infer(self, device: str, n_ensemble: int = N_ENSEMBLE) -> None:
+    def infer(self, device: str, n_ensemble: int = N_ENSEMBLE, only_member: int | None = None) -> None:
         t0 = time.time()
         stats = self._decode_stats()
         n_ch = len(self.variables)
@@ -287,7 +287,7 @@ class SFT:
         n_days = cond.shape[0]
         t_span_days = f"{self.eval_start}-01-01"
         members = []
-        for e in range(1, n_ensemble + 1):
+        for e in ([only_member] if only_member else range(1, n_ensemble + 1)):
             out_path = self.prep_dir / f"inference_ensemble{e}.pt"
             if out_path.exists():
                 try:
@@ -323,6 +323,11 @@ class SFT:
             print(f"  member {e}/{n_ensemble}: {tuple(member.shape)} in "
                   f"{time.time()-te:.1f}s -> {out_path.name}", flush=True)
 
+        if only_member:
+            # one member per job (members run in parallel): no ensemble mean, so two jobs never
+            # write the same predictions; --phase member decodes the cached member
+            print(f"INFER member {only_member} complete in {time.time()-t0:.1f}s", flush=True)
+            return
         mean_sample = torch.stack(members, dim=0).mean(dim=0)   # [T,C,H,W] normalized
         recon = self._reconstruct(mean_sample, stats)
         self._save(recon)
@@ -404,6 +409,8 @@ def main():
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--ensemble", type=int, default=N_ENSEMBLE)
     p.add_argument("--no-resume", action="store_true")
+    p.add_argument("--only-member", type=int, default=None,
+                   help="--phase infer: compute this member only (seed 1000 + member), no ensemble mean")
     p.add_argument("--member", type=int, default=1,
                    help="--phase member: which cached ensemble member to write")
     p.add_argument("--out-dir", default=None,
@@ -428,7 +435,7 @@ def main():
     elif args.phase == "train":
         sf.train(args.device, resume=not args.no_resume)
     elif args.phase == "infer":
-        sf.infer(args.device, n_ensemble=args.ensemble)
+        sf.infer(args.device, n_ensemble=args.ensemble, only_member=args.only_member)
     elif args.phase == "member":
         sf.save_member(args.member, Path(args.out_dir or args.pred_dir))
 
