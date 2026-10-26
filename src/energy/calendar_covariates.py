@@ -36,7 +36,7 @@ Time zone convention: timestamps are *local civil time* (no tz). DST
 transitions per region are hard-coded by rule:
   france:     last Sun Mar -> last Sun Oct
   us_central: 2nd Sun Mar  -> 1st Sun Nov
-  australia:  1st Sun Oct  -> 1st Sun Apr (NSW observes; QLD does not)
+  australia:  1st Sun Oct  -> 1st Sun Apr (NSW, VIC and SA observe it)
 """
 
 from __future__ import annotations
@@ -130,9 +130,7 @@ def holiday_sets(region: str, years):
         h = hl.France(years=years) if region == "france" else hl.US(years=years)
         return set(h.keys())
     if region == "australia":
-        nsw = set(hl.AU(years=years, state="NSW").keys())
-        qld = set(hl.AU(years=years, state="QLD").keys())
-        return nsw | qld
+        return set().union(*(hl.AU(years=years, state=st).keys() for st in ("NSW", "VIC", "SA")))
     raise ValueError(f"unknown region {region!r}")
 
 

@@ -1,8 +1,11 @@
-"""Build us_central energy dataset from EIA-930 (region decision: MISO+SPP+ERCOT).
+"""Build us_central energy dataset from EIA-930 (region decision: SPP only).
+
+SPP (SWPP) lies almost entirely inside the us_central weather box; most of ERCOT's
+load is south of 34N and much of MISO east of 89W, so they are left out.
 
 Conventions match the France 30-min dataset (TAM_downscaling/data/...):
   - date column = 30-min interval START, "%Y-%m-%d %H:%M:%S"
-  - NetDemand = Sum_{BA in {MISO,SWPP,ERCO}} (Demand(Adj) - Wind(Adj) - Solar(Adj))
+  - NetDemand = Demand(Adj) - Wind(Adj) - Solar(Adj) of SWPP
   - EIA-930 supplies hourly "Local Time at End of Hour"; we shift back 1h to get
     the interval-start label and upsample each hour to two 30-min rows (ffill).
   - Wind/Solar fuel splits (EIA 'Net Generation from Wind/Solar (Adjusted)') only
@@ -29,7 +32,7 @@ SIX_MONTHS = {
 }
 START = "2018-07-01"
 END = "2022-12-31"
-BAS = ["MISO", "SWPP", "ERCO"]
+BAS = ["SWPP"]
 URL = "https://www.eia.gov/electricity/gridmonitor/sixMonthFiles/EIA930_BALANCE_{y}_{half}.csv"
 
 
@@ -59,7 +62,7 @@ def load_series(cache: Path) -> pd.DataFrame:
                 ["Demand (MW) (Adjusted)",
                  "Net Generation (MW) from Wind (Adjusted)",
                  "Net Generation (MW) from Solar (Adjusted)"]
-            ].sum().reset_index()  # sum across MISO+SWPP+ERCO
+            ].sum(min_count=1).reset_index()  # sum over the BAs in BAS; a missing hour stays NaN (not 0)
             rows.append(d)
     s = pd.concat(rows, ignore_index=True).sort_values("dt_end").drop_duplicates("dt_end")
     s = s.rename(columns={
@@ -107,4 +110,4 @@ if __name__ == "__main__":
     repo = Path(__file__).resolve().parents[2]
     cache = repo / "data/eia930"
     cache.mkdir(exist_ok=True)
-    build_us_central(cache, repo / "data/us_central_energy.csv")
+    build_us_central(cache, repo / "data/us_central_energy_spp.csv")
