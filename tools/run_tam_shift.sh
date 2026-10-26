@@ -32,5 +32,5 @@ for m in ("cdft", "idownscale"):
 PY
 cd "$TAM"
 .venv/bin/python net_lens_region.py --region france --gcm cnrm_cm6_1 --results-root "$ROOT" \
-  --gcm-dir "$BM/data/cmip6/_v2_inputs/france/cnrm_cm6_1" --out-dir "$OUT" > "$OUT/lens.log" 2>&1
+  --gcm-dir "$BM/data/cmip6/_v2_inputs/france/cnrm_cm6_1" --out-dir "$OUT" --freeze-trend > "$OUT/lens.log" 2>&1
 grep -E "KS=" "$OUT/lens.log"

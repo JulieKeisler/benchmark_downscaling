@@ -19,6 +19,6 @@ for p in "${PAIRS[@]}"; do
   echo "=== $r x $g ($(date +%H:%M))"
   .venv/bin/python net_lens_region.py --region "$r" --gcm "$g" \
     --results-root "$BM/results/v2_tam" --gcm-dir "$BM/data/cmip6/_v2_inputs/$r/$g" \
-    --out-dir "$OUT" > "$OUT/logs/${r}_${g}.log" 2>&1
+    --out-dir "$OUT" --freeze-trend > "$OUT/logs/${r}_${g}.log" 2>&1
   grep -E "Methods with local predictions|KS=" "$OUT/logs/${r}_${g}.log" | sed 's/^/  /'
 done
