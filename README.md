@@ -1,25 +1,34 @@
-# Downscaling Benchmark for the Electricity System
+# DS4Impact — a climate downscaling benchmark for impact studies
 
-A benchmark for evaluating downscaling and bias-correction methods for the
-electricity system. Reference data is ERA5 daily reanalysis (pseudo-observations,
-1960–2020); model data comes from CMIP6 GCMs (1960–2100). Default domain:
-France, daily resolution.
+DS4Impact compares climate downscaling and bias-adjustment methods, from
+interpolation and quantile mapping to generative machine learning, under one
+protocol. Every method is driven by the same CMIP6 GCMs (historical run and
+scenario, to 2100) and calibrated on the same reference, the ERA5 daily
+reanalysis at 0.25° (from 1979). Three regions (France, south-eastern
+Australia, central US) are crossed with three GCMs (IPSL-CM6A-LR, CNRM-CM6-1,
+CESM2), for six daily variables (`tas`, `pr`, `sfcWind`, `sfcWindmax`, `psl`,
+`rsds`).
 
-We downscale the variables that drive the electric system — temperature
-(demand), 10-m wind and gusts (wind generation), precipitation (hydrology),
-sea-level pressure (weather regimes) — to ~25 km and score each baseline both
-against the observations (accuracy) and against the GCM's future signal
-(fidelity), plus a downstream net-load forecasting task.
+Each downscaled product is scored three ways:
+
+- **accuracy** against ERA5 over 2000–2020, outside the 1980–1999 calibration
+  window, the dependence between variables included;
+- **fidelity** to the driving GCM over 2000–2100, its projected change included;
+- **through an impact model**. The first impact model is electricity net load
+  (demand minus wind and solar generation), forecast by a fixed TAM model. The
+  variables of this first version were chosen for it.
 
 - **Code & dashboard:** <https://github.com/JulieKeisler/benchmark_downscaling>
 - **Dashboard:** `streamlit run src/dashboard/dashboard.py`
 
-Compared to existing downscaling/bias-correction benchmark initiatives
+Compared to existing downscaling and bias-adjustment benchmark initiatives
 (VALUE — Maraun et al. 2015; CORDEX/EURO-CORDEX — Jacob et al. 2014;
-ISIMIP — Frieler et al. 2017; WeatherBench — Rasp et al. 2020/2024), this
-benchmark is electricity-oriented, transparent (every baseline/metric links to
-its implementation), projection-aware (all methods on the same GCM out to 2100),
-and fully open-source.
+CORDEX-ML-Bench — Rampal et al. 2026; ISIMIP — Frieler et al. 2017;
+ibicus — Spuler et al. 2024; WeatherBench — Rasp et al. 2020/2024), this
+benchmark compares bias adjustment and machine-learning methods under one
+protocol, scores every product through an impact model, and is transparent
+(every method and metric links to its implementation), projection-aware (all
+methods on the same GCMs out to 2100) and fully open-source.
 
 ---
 

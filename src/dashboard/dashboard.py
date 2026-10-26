@@ -154,8 +154,8 @@ GITHUB_URL = "https://github.com/JulieKeisler/benchmark_downscaling"
 # SHOW_DEV_NOTES=1 is set (see deploy/streamlit_cloud/app.py).
 DEV_NOTES = os.environ.get("SHOW_DEV_NOTES") == "1"
 
-st.set_page_config(page_title="Downscaling Benchmark for the Electricity System", layout="wide")
-st.title("Downscaling Benchmark for the Electricity System")
+st.set_page_config(page_title="DS4Impact — climate downscaling benchmark", layout="wide")
+st.title("DS4Impact — a climate downscaling benchmark for impact studies")
 # Compact sidebar: less space above the first widget and between elements.
 st.html("""<style>
 [data-testid="stSidebarHeader"] {height: 2.5rem; min-height: 0; padding: 0.5rem 1rem 0 1rem;}
@@ -747,12 +747,12 @@ BENCHMARK_CONTEXT = {
     "VALUE — <a href='https://doi.org/10.1002/2014EF000259' target='_blank'>Maraun et al. (2015), Earth's Future</a>": (
         "<b>Protocol:</b> the reference for standardised <b>perfect-prognosis</b> evaluation in "
         "Europe — inter-compares statistical downscaling methods on common benchmarks. "
-        "<b>Settings:</b> fixed European stations/grid at daily scale across several GCMs and "
-        "reanalyses; scores predictands vs observations. "
+        "<b>Settings:</b> 86 European stations at daily scale, with predictors from the "
+        "ERA-Interim reanalysis (perfect predictors); scores predictands vs observations. "
         "<b>What we take:</b> the accuracy-vs-ERA5 view. "
         "<b>What differs:</b> we also demand fidelity vs the GCM out to 2100 (not just skill on "
-        "a reanalysis), benchmark the 5 electricity-relevant variables as multivariate fields "
-        "rather than station series, and evaluate on the 57×65 France grid instead of stations."
+        "a reanalysis), benchmark six variables as multivariate fields rather than station "
+        "series, and evaluate on 57×65 grids over three regions instead of stations."
     ),
     "CORDEX / EURO-CORDEX — <a href='https://doi.org/10.1007/s10113-013-0499-2' target='_blank'>Jacob et al. (2014)</a>": (
         "<b>Protocol:</b> dynamical downscaling via fixed regional models (RCMs) nested in GCMs, "
@@ -764,8 +764,25 @@ BENCHMARK_CONTEXT = {
         "so it enables paired, supervised RCM-emulation benchmarks; our fine truth is observed "
         "ERA5, which is not aligned to the free-running GCM, so we evaluate unpaired "
         "(distribution metrics + fidelity vs the GCM). We also inter-compare statistical and "
-        "machine-learning methods on a <i>single</i> GCM instead of RCM chains — cheaper, and "
-        "isolates the baseline effect, but we lose RCM process realism and multi-GCM spread."
+        "machine-learning methods on three GCMs crossed with three regions instead of RCM "
+        "chains — cheaper, and isolates the effect of the method, but without RCM process "
+        "realism."
+    ),
+    "CORDEX-ML-Bench — <a href='https://doi.org/10.48550/arXiv.2606.29172' target='_blank'>Rampal et al. (2026)</a>": (
+        "<b>Protocol:</b> machine-learning emulators of regional climate models, trained on "
+        "coarsened RCM fields from the historical period alone or from historical and future "
+        "periods — a perfect-model setting in which the RCM is the truth. "
+        "<b>Settings:</b> 40 machine-learning configurations over three domains. "
+        "<b>What differs:</b> our reference is observed (ERA5), so the scores see model biases, "
+        "and we compare bias adjustment and machine-learning methods together, driven by raw GCMs."
+    ),
+    "ibicus — <a href='https://doi.org/10.5194/gmd-17-1249-2024' target='_blank'>Spuler et al. (2024)</a>": (
+        "<b>Protocol:</b> an open Python package that implements eight bias-adjustment methods "
+        "in one framework and evaluates their marginal, spatiotemporal and inter-variable "
+        "properties together with their change of the trend. "
+        "<b>Settings:</b> case study with seven CMIP6 GCMs over the Mediterranean. "
+        "<b>What we take:</b> the double evaluation, on the past and on the change. "
+        "<b>What differs:</b> we add machine-learning methods, several regions and an impact model."
     ),
     "ISIMIP — <a href='https://doi.org/10.5194/gmd-10-4321-2017' target='_blank'>Frieler et al. (2017)</a>": (
         "<b>Protocol:</b> harmonised, trend-preserving <b>bias adjustment</b> (ISIMIP3BASD, Lange 2019) of GCM output feeding "
@@ -788,7 +805,31 @@ BENCHMARK_CONTEXT = {
     ),
 }
 
-# Research references underpinning the electricity-system framing (DOI-linked, markdown links).
+# Research references on judging downscaling through impacts (DOI-linked, markdown links).
+IMPACT_REFS = {
+    "Univariate correction and multivariate hazards": (
+        "[Zscheischler, J., Fischer, E. M., & Lange, S. (2019), Earth System Dynamics 10:31–43]"
+        "(https://doi.org/10.5194/esd-10-31-2019) — correcting each variable on its own can "
+        "leave or increase biases in hazards that depend on several variables."
+    ),
+    "Hydrology through an impact model": (
+        "[Vogel, E., et al. (2023), Journal of Hydrology 622:129693]"
+        "(https://doi.org/10.1016/j.jhydrol.2023.129693) — an evaluation framework for "
+        "downscaling and bias correction in climate change impact studies."
+    ),
+    "Crops through twelve wheat models": (
+        "[Galmarini, S., et al. (2024), Agricultural Systems 215:103846]"
+        "(https://doi.org/10.1016/j.agsy.2023.103846) — multi- and univariate bias "
+        "adjustments compared through crop models."
+    ),
+    "Multivariate corrections through several impact models": (
+        "[Allard, D., et al. (2025), Hydrology and Earth System Sciences 29:4711–4738]"
+        "(https://doi.org/10.5194/hess-29-4711-2025) — multivariate bias corrections assessed "
+        "on various impact models under climate change."
+    ),
+}
+
+# Research references for the first impact model, electricity (DOI-linked, markdown links).
 ELECTRICITY_REFS = {
     "Temperature → demand": (
         "[Auffhammer, M., Baylis, P., & Hausman, C. H. (2017), PNAS 114(8):1886–1891]"
@@ -868,7 +909,7 @@ def _app_search_index(stamp: tuple) -> list[dict]:
     here = Path(__file__).resolve().parent
     tabs = {"tab_welcome": "Welcome", "tab_table": "Metrics table", "tab_radar": "Radar",
             "tab_lines": "Line plots", "tab_maps": "Spatial maps",
-            "tab_intervar": "Inter-variable", "tab_load": "Load Forecasting (TAM)"}
+            "tab_intervar": "Inter-variable", "tab_load": "Impact: electricity"}
     docs = {"METHOD_DOCS": ("Welcome", "Methods"), "METHOD_LINKS": ("Welcome", "Methods"),
             "METHOD_OVERVIEW_MD": ("Welcome", "Methods"), "METRIC_DOCS": ("Welcome", "Metrics"),
             "METRIC_IMPL": ("Welcome", "Metrics"), "METRIC_LABELS": ("Metrics table", "")}
@@ -915,8 +956,9 @@ with st.sidebar:
         f"**Experiment:** {exp_label} · {_gcm_label(_selected_gcm)}  \n"
         "**ERA5:** pseudo-obs (1979–2022)  \n"
         "**Evaluation period:** 2000–2020 against ERA5 and 2000–2100 for GCM related metrics  \n"
-        "For the electricity system: demand (tas), wind (sfcWind), solar/rad, hydro (pr), "
-        f"regimes (psl).  \n🔗 [Benchmark GitHub]({GITHUB_URL})"
+        "**Variables** chosen for the first impact model, electricity: demand (tas), "
+        "wind (sfcWind), solar (rsds), hydro (pr), regimes (psl).  \n"
+        f"🔗 [Benchmark GitHub]({GITHUB_URL})"
     )
 
     st.markdown("---")
@@ -1082,17 +1124,17 @@ def _render_map_grid(panels, *, cmap, vmin, vmax, cb_label, n_cols, width, cb_ti
 if _selected == "france":
     _tab_titles = [
         "🎯 Welcome", "📊 Metrics table", "🕸 Radar", "📈 Line plots",
-        "🗺 Spatial maps", "🔗 Inter-variable", "⚡ Load Forecasting (TAM)",
+        "🗺 Spatial maps", "🔗 Inter-variable", "⚡ Impact: electricity",
     ]
 elif _selected == "us_central":
     _tab_titles = [
         "🎯 Welcome", "📊 Metrics table", "🕸 Radar", "📈 Line plots",
-        "🗺 Spatial maps", "🔗 Inter-variable", "⚡ Load Forecasting (TAM)",
+        "🗺 Spatial maps", "🔗 Inter-variable", "⚡ Impact: electricity",
     ]
 elif _selected == "australia":
     _tab_titles = [
         "🎯 Welcome", "📊 Metrics table", "🕸 Radar", "📈 Line plots",
-        "🗺 Spatial maps", "🔗 Inter-variable", "⚡ Load Forecasting (TAM)",
+        "🗺 Spatial maps", "🔗 Inter-variable", "⚡ Impact: electricity",
     ]
 else:
     _tab_titles = [
@@ -1214,13 +1256,15 @@ if _nav_scroll:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_welcome:
     st.markdown(
-        "### 🎯 Welcome to the Downscaling Benchmark for the Electricity System\n"
-        "**In short.** Assessing how climate change will affect the electricity system "
-        "needs climate projections at a finer resolution than global climate models (GCMs) "
-        "provide. **Statistical downscaling** and bias adjustment correct the coarse GCM "
-        "fields against observations on a fine grid. This dashboard compares downscaling "
-        "methods three ways: against observations (ERA5, 2000–2020), against the change "
-        "the GCM projects (to 2100), and through a net-load forecasting model."
+        "### 🎯 Welcome to DS4Impact\n"
+        "**In short.** Climate impact studies — of river flows, crops, health or electricity — "
+        "need climate projections at a finer resolution, and with smaller biases, than global "
+        "climate models (GCMs) provide. **Statistical downscaling**, bias adjustment and, more "
+        "recently, machine learning correct the coarse GCM fields against observations on a "
+        "fine grid. This dashboard compares nine such methods under one protocol, three ways: "
+        "against observations (ERA5, 2000–2020), against the change the GCM projects (to "
+        "2100), and through an impact model. The first impact model is electricity net load, "
+        "the demand minus wind and solar generation."
     )
     st.markdown(
         f"📦 Benchmark code, data recipes and this dashboard: "
@@ -1288,12 +1332,12 @@ with tab_welcome:
             "**Contents** · "
             "[1. What is a GCM?](#ww-sec1) · "
             "[2. ERA5 reanalysis](#ww-sec2) · "
-            "[3. Why the electricity system needs fine-resolution data](#ww-sec3) · "
+            "[3. Why impact studies need fine-resolution data](#ww-sec3) · "
             "[4. What is statistical downscaling?](#ww-sec4) · "
             "[5. What this benchmark does](#ww-sec5) · "
             "[6. Why distribution metrics](#ww-sec6) · "
             "[7. Why not pure perfect prognosis](#ww-sec7) · "
-            "[8. Downstream test: net-load forecasting](#ww-sec8) · "
+            "[8. Impact model: electricity net load](#ww-sec8) · "
             "[References](#ww-refs) · "
             "[How to read this dashboard](#ww-how)"
         )
@@ -1312,11 +1356,11 @@ with tab_welcome:
 "cell holds one value *per variable per day* — 2-m temperature, near-surface wind, "
              "precipitation, sea-level pressure, surface radiation.\n\n"
              "Three properties of these coarse, free-running fields are what make "
-             "downscaling necessary for the electricity system:\n"
+             "downscaling necessary for impact studies:\n"
              "- **Coarse output.** At ~250 km there is essentially no local detail: no "
-             "valley-scale heatwave, no gusts at a specific wind-farm site, no convective "
-             "storm cell — yet installed capacity and demand sit in places the grid cannot "
-             "resolve.\n"
+             "valley-scale heatwave, no convective storm over one catchment, no gusts at a "
+             "specific wind-farm site — yet the rivers, fields, cities and power plants that "
+             "impact studies model sit at scales the grid cannot resolve.\n"
              "- **No calendar.** A GCM is not a weather forecast. It simulates a climate, "
              "driven by external forcings (greenhouse gases, aerosols, solar activity) and "
              "unconstrained by observations, so it is not synchronised with the observed "
@@ -1342,7 +1386,7 @@ with tab_welcome:
             "covers any study region on a **57×65** grid (~3700 cells) with all the variables "
             "we use — availability follows the GCM, so e.g. CESM2 has no daily `sfcWindmax`.\n"
             "ERA5 is not perfect, but it is the best available \"ground truth\" at the "
-            "resolution energy applications need, and it is the standard reference for "
+            "resolution many impact studies need, and it is the standard reference for "
             "downscaling development. Throughout this dashboard, \"the observations\" / "
             "\"pseudo-observations\" always mean this reanalysis."
         )
@@ -1350,26 +1394,35 @@ with tab_welcome:
         # ── Section 3: why the energy sector needs fine weather ─────────────
         st.markdown('<a id="ww-sec3"></a>', unsafe_allow_html=True)
         st.markdown(
-            "## 3 · Why does the electricity system need fine-resolution climate data?\n"
-            "Unlike the GCM's ~250 km cells, the power system is planned and operated at "
-            "the scale of cities, wind farms and transmission corridors. And weather is an "
-            "*input* to almost every part of its operation:\n"
-            "- **Demand (the load)** scales with temperature — winter heating and summer "
-            "cooling course through the same grids.\n"
-            "- **Wind generation** depends on the local wind resource; **solar generation** "
-            "depends on local radiation.\n"
-            "- **Hydrology** bounds hydro output and the availability of cooling water for "
-            "thermal plants; **pressure regimes** set broad-scale weather patterns.\n\n"
-            "### Net load — the quantity that matters\n"
-            "The single quantity that concentrates all these sensitivities is net "
-            "load: `NetDemand = load − wind − solar`. It is what a system operator must "
-            "balance in real time and what capacity planning must size for. Because it "
-            "compounds the temperature sensitivity of demand *and* the wind/solar "
-            "sensitivity of generation, it is exactly the object through which this "
-            "benchmark reveals how errors in the downscaled fields translate into "
-            "operationally relevant errors (see [8. Downstream test](#ww-sec8)).\n\n"
+            "## 3 · Why do impact studies need fine-resolution climate data?\n"
+            "Impact studies model systems that respond to the weather at their own scale — a "
+            "catchment, a field, a city, a wind farm — and often to several variables at once:\n"
+            "- **River flows** depend on precipitation and evaporation, and **crop yields** on "
+            "several correlated weather variables "
+            "([Galmarini et al., 2024](https://doi.org/10.1016/j.agsy.2023.103846)).\n"
+            "- **Heat stress** depends on temperature and humidity together "
+            "([Zscheischler et al., 2019](https://doi.org/10.5194/esd-10-31-2019)).\n"
+            "- **The electricity system** depends on temperature (demand), and on wind and solar "
+            "radiation (generation) "
+            "([Bartók et al., 2019](https://doi.org/10.1016/j.cliser.2019.100138)).\n\n"
+            "Correcting each variable on its own can then distort the hazards that depend on "
+            "several of them, and methods that look alike on the climate variables can differ "
+            "markedly once they drive an impact model "
+            "([Vogel et al., 2023](https://doi.org/10.1016/j.jhydrol.2023.129693)). This is why "
+            "the benchmark scores the dependence between variables, and passes every product "
+            "through an impact model (see [8. Impact model](#ww-sec8)).\n\n"
+            "### The first impact model: electricity net load\n"
+            "The first impact model of the benchmark is electricity net load: "
+            "`NetDemand = load − wind − solar`. It is what a system operator must balance in "
+            "real time and what capacity planning must size for. Because it compounds the "
+            "temperature sensitivity of demand *and* the wind/solar sensitivity of generation, "
+            "it summarises all variables over a region in one quantity of direct use. The "
+            "variables and regions of this first version were chosen for it: other sectors "
+            "would need others, such as the daily minimum and maximum temperature, humidity or "
+            "sub-daily precipitation.\n\n"
             "### The practical barriers\n"
-            "Using climate projections for such work is routinely blocked by documented, "
+            "In the energy sector, for instance, using climate projections is routinely "
+            "blocked by documented, "
             "practical barriers: the fields are too coarse for site-level analysis, they "
             "carry systematic biases that mislead impact models, different models and "
             "scenarios disagree, daily-mean outputs miss the sub-daily and extremes "
@@ -1400,9 +1453,9 @@ with tab_welcome:
             "**distribution-based / quantile** methods (EQM, BCSD, CDF-t, dOTC), **learned "
             "regression** methods (iDownscale), and **generative** methods "
             "(CorrDiff, consistency models, SerpentFlow-CLIM). The `Methods` tab documents "
-            "the nine baselines used here. Crucially, **our benchmark is not a pure "
+            "the nine methods used here. Crucially, **our benchmark is not a pure "
             "perfect-prognosis study** — the "
-            "baselines are calibrated in their *own* way on the selected GCM, and "
+            "methods are calibrated in their *own* way on the selected GCM, and "
             "[7. Why not pure perfect prognosis](#ww-sec7) explains why this matters when "
             "comparing against existing benchmarks."
         )
@@ -1434,7 +1487,8 @@ with tab_welcome:
                 "coarse grid; projections evaluated 2000–2100.\n"
                 "- **Reference (ground truth):** ERA5 reanalysis, 57×65 grid, "
                 "1979–2022 (France: 1979–2020).\n"
-                "- **Variables:** the electricity drivers — `tas` (2-m temperature, drives "
+                "- **Variables:** chosen for the first impact model, electricity — `tas` (2-m "
+                "temperature, drives "
                 "demand), `sfcWind` / `sfcWindmax` (10-m wind speed and gust, drive wind "
                 "generation), `rsds` (surface solar radiation, drives PV), `pr` "
                 "(precipitation, drives hydrology), `psl` (sea-level pressure, sets weather "
@@ -1458,7 +1512,7 @@ with tab_welcome:
                 ("2", "Downscale with each baseline to 57×65 (~25 km)"),
                 ("3", "Score vs ERA5 pseudo-observations (accuracy)"),
                 ("4", "Score vs GCM (does it keep the climate signal?)"),
-                ("5", "Feed into a net-load forecast (⚠️ Load Forecasting tab)"),
+                ("5", "Feed into an impact model: electricity net load (⚡ Impact tab)"),
             ]:
                 st.markdown(
                     f"<div style='background:#f0f2f6;border-radius:8px;padding:6px 10px;"
@@ -1476,7 +1530,7 @@ with tab_welcome:
             "| **Calibration** | 1980–1999 — distribution baselines fit on the selected GCM; neural baselines trained on ERA5, with a GCM-vs-ERA5 pre-correction at inference |\n"
             "| **Accuracy evaluation** | 2000–2020 vs ERA5 |\n"
             "| **Fidelity evaluation** | 2000–2100 vs the GCM; Δ-signal 2040–2060 & 2080–2100 |\n"
-            "| **Downstream (TAM)** | trained 2012–2021 on ERA5 + load; applied unchanged 2000–2022 |\n"
+            "| **Impact model (TAM, net load)** | trained 2012–2021 on ERA5 + net load; applied unchanged 2000–2022 |\n"
             "| **Units** | tas K · pr mm/day · sfcWind / sfcWindmax m/s · psl Pa · rsds W/m² |"
         )
 
@@ -1491,12 +1545,13 @@ with tab_welcome:
             "aligned to historical calendar dates, so there is no \"correct\" ERA5 value for "
             "a given GCM day to be compared against. Only *distributions* of many days are "
             "comparable. That alone is why we use distribution metrics.\n"
-            "2. **Point errors miss what planning fears.** Even with an aligned truth, "
+            "2. **Point errors miss what impact studies fear.** Even with an aligned truth, "
             "MSE/MAE are dominated by the bulk of the distribution — blind to the **tails** "
             "(heatwaves, droughts, gusts), the **variability/autocorrelation** (does a bad "
             "day persist into a bad week?), the **spatial structure** (wind correlated "
-            "across a whole region), and the **inter-variable links** (cold, calm nights "
-            "push peak demand when wind and solar both dip). Two series can share an "
+            "across a whole region), and the **inter-variable links** (hot, dry spells "
+            "stress crops, and cold, calm, dark days push peak demand when wind and solar "
+            "both dip). Two series can share an "
             "identical RMSE and have totally different tails "
             "([Maraun et al., 2010](https://doi.org/10.1029/2009rg000314); "
             "[Gneiting & Raftery, 2007](https://doi.org/10.1198/016214506000001437)). This "
@@ -1513,7 +1568,7 @@ with tab_welcome:
             "frequencies, autocorrelation, spatial spectra), computed separately against the "
             "observed distribution (accuracy) and against the GCM (signal preservation); "
             "and **(b)** a *downstream shortcut*: pass each scenario through a **fixed** "
-            "net-load forecaster and compare the resulting forecast-error distribution "
+            "impact model — here a net-load forecaster — and compare the resulting distribution "
             "(see [8. Downstream test](#ww-sec8)) — the engineering view that a forecast is "
             "only as good as the operational decision it informs "
             "([Hong & Fan, 2016](https://doi.org/10.1016/j.ijforecast.2015.11.011))."
@@ -1531,8 +1586,8 @@ with tab_welcome:
                 "figure comes from the first version of the benchmark; its distribution-based "
                 "panel is an earlier CDF-t variant). The "
                 "bias that remains is exactly what the accuracy metrics on the other tabs "
-                "quantify — and it is precisely the kind of error that feeds straight into a "
-                "power-system model's demand forecasts."
+                "quantify — and it is precisely the kind of error that feeds straight into an "
+                "impact model, such as the demand forecast of a power-system model."
             )
         else:
             if DEV_NOTES:
@@ -1548,11 +1603,12 @@ with tab_welcome:
         # ── vs existing benchmarks (subsection of 7) ─────────────────────────
         st.markdown("### This benchmark vs existing downscaling/bias-correction benchmarks")
         st.markdown(
-            "Existing community benchmarks come from different traditions and were not "
-            "built for the energy sector: VALUE (station-based, perfect-prognosis), "
-            "EURO-CORDEX (dynamical downscaling of RCMs), ISIMIP (bias-corrected GCMs for "
-            "impact studies), and WeatherBench (ML benchmarks on raw reanalysis fields, "
-            "not GCM projections)."
+            "Existing community benchmarks come from different traditions: VALUE "
+            "(station-based, perfect predictors), EURO-CORDEX (dynamical downscaling with "
+            "RCMs), CORDEX-ML-Bench (machine-learning emulators of RCMs), ISIMIP "
+            "(bias-adjusted GCMs for impact studies), ibicus (an open framework to apply and "
+            "evaluate bias adjustment), and WeatherBench (ML benchmarks for weather "
+            "forecasting, not GCM projections)."
         )
         for title, note in BENCHMARK_CONTEXT.items():
             st.markdown(
@@ -1562,10 +1618,12 @@ with tab_welcome:
                 unsafe_allow_html=True,
             )
         st.caption(
-            "Compared with those initiatives, this benchmark is: **electricity-oriented** "
-            "(demand/wind/solar variables + a load-forecasting downstream task), **transparent** "
-            "(every baseline, metric and plot links to its implementation below), "
-            "**projection-aware** (all methods evaluated on the same GCM out to 2100), and "
+            "Compared with those initiatives, this benchmark is: **impact-oriented** "
+            "(every product is scored through a downstream impact model, first electricity "
+            "net load), **cross-family** (bias adjustment and machine-learning methods under one "
+            "protocol), **transparent** (every method, metric and plot links to its "
+            "implementation below), **projection-aware** (all methods evaluated on the same "
+            "GCMs out to 2100), and "
             f"**open** (code released under [this GitHub repository]({GITHUB_URL}))."
         )
 
@@ -1575,12 +1633,14 @@ with tab_welcome:
 
         # ── Section 8: Load forecasting downstream ──────────────────────────
         st.markdown('<a id="ww-sec8"></a>', unsafe_allow_html=True)
-        st.markdown("## 8 · A decision-relevant downstream test — net-load forecasting")
+        st.markdown("## 8 · Impact model — electricity net load")
         st.markdown(
-            "Distributional errors only matter operationally if they propagate into "
-            "decisions, so the ⚡ Load Forecasting tab pushes each downscaled scenario "
-            "through a **fixed**, already-trained net-load forecaster and compares what "
-            "breaks.\n\n"
+            "Distributional errors matter only if they propagate into the decisions an impact "
+            "study supports. The ⚡ Impact: electricity tab therefore pushes each downscaled "
+            "scenario through a **fixed**, already-trained impact model and compares what "
+            "breaks. The first impact model is a net-load forecaster, and the same tab counts "
+            "the compound events of the electricity system (Dunkelflaute, cold–calm "
+            "spells).\n\n"
             f"**The target.** **Net load** for {_wl_region} — `NetDemand = load − wind − solar`, "
             "a daily series. It is the quantity a system operator must "
             "balance in real time, and it is where errors in `tas` (demand), "
@@ -1610,7 +1670,11 @@ with tab_welcome:
 
         # ── References ──────────────────────────────────────────────────────
         st.markdown('<a id="ww-refs"></a>', unsafe_allow_html=True)
-        with st.expander("📚 References — electricity-system climate sensitivity"):
+        with st.expander("📚 References — impact studies, and the electricity system"):
+            st.markdown("**Judging downscaling through impacts**")
+            for area, cite in IMPACT_REFS.items():
+                st.markdown(f"- **{area}.** {cite}")
+            st.markdown("**Climate sensitivity of the electricity system (first impact model)**")
             for area, cite in ELECTRICITY_REFS.items():
                 st.markdown(f"- **{area}.** {cite}")
 
@@ -1638,7 +1702,8 @@ with tab_welcome:
             ("📈 Line plots", "seasonal cycles, annual means, distributions & spatial spectra"),
             ("🗺 Spatial maps", "bias / correlation / climate-signal maps per method"),
             ("🔗 Inter-variable", "do methods keep observed links between variables?"),
-            ("⚡ Load Forecasting", "forecasting net electricity load with the fixed downstream model"),
+            ("⚡ Impact: electricity", "the first impact model: net load through a fixed "
+             "forecaster, and compound events (Dunkelflaute, cold–calm spells)"),
         ]:
             st.markdown(f"- **{tab_name}** — {desc}")
 
@@ -1726,9 +1791,9 @@ with tab_welcome:
             ("01 · Metrics table", "Start here. Pick variables & metric groups in the sidebar or on the tab. Green = best per row. Read the captions for caveats (e.g. daily temporal corr is trivially ~1)."),
             ("02 · Radar", "Zoom out. Each method is one polygon; every axis is a metric normalised so 1.0 = mean across methods. Points *inside* the bounding polygon are better."),
             ("03 · Line plots", "Drill into one variable. 'seasonal' shows the climatology, 'annual' the long-term evolution (watch GCM vs ERA5 vs methods), 'cdf' the distribution, 'spectra' the spatial structure."),
-            ("04 · Spatial maps", "See *where* methods succeed or fail — bias, temporal correlation, and future climate-signal maps over France."),
+            ("04 · Spatial maps", "See *where* methods succeed or fail — bias, temporal correlation, and future climate-signal maps over the selected region."),
             ("05 · Inter-variable", "Check whether methods preserve observed links, e.g. tas–pr correlation. A correct marginal distribution can still break physical relationships."),
-            ("06 · Load Forecasting (TAM)", "A real downstream payoff: feed each downscaled scenario into a fixed net-load forecaster. Small distribution errors translate into MW of forecast error."),
+            ("06 · Impact: electricity", "The first impact model: feed each downscaled scenario into a fixed net-load forecaster, and count compound events such as Dunkelflaute. Small distribution errors translate into MW of forecast error."),
         ]
         for title, body in tour_steps:
             st.markdown(
@@ -1741,7 +1806,7 @@ with tab_welcome:
             "**1 min:** Overview → the two images.  \n"
             "**5 min:** Metrics table for *tas* + Fidelity vs *Δ signal*.  \n"
             "**15 min:** Spatial maps + Line spectra.  \n"
-            "**Deep dive:** Load Forecasting → read about TAM in Method docs."
+            "**Deep dive:** Impact: electricity → read about TAM in Method docs."
         )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2695,232 +2760,22 @@ with tab_intervar:
                                "For tail × tail, blue/red = less/more often together than if "
                                "independent; cells with very few tail days saturate the scale.")
 
-    # ── Energy events (Dunkelflaute / cold–calm spells) ──────────────────────
     st.markdown("---")
-    st.subheader("Energy events — Dunkelflaute & cold–calm spells")
-    st.caption(
-        "Days when the region mean is low in wind AND low in solar (Dunkelflaute), "
-        "or cold AND calm (heating demand meets weak wind generation). "
-        "Thresholds are the 20th percentile of the ERA5 daily region mean, applied "
-        "unchanged to the GCM and to every downscaled product so the three are "
-        "classified with the same absolute cutoffs; a spell counts as an event "
-        "from 2 consecutive days on."
-    )
-    _ev_pairs = [(m, (plot_data.get(m) or {}).get("_events")) for m in sel_methods]
-    _ev_pairs = [(m, e) for m, e in _ev_pairs if e]
-    if not _ev_pairs:
-        if DEV_NOTES:
-            st.info(
-                "No energy-event data yet — run "
-                "`python src/evaluation/backfill_energy.py` or re-run evaluate.py."
-            )
-        else:
-            st.info("No energy-event data for this selection.")
-    else:
-        _base = _ev_pairs[0][1]
-        _meta = _base.get("meta", {})
-        _thr = _meta.get("thresholds", {})
-        _per = _meta.get("period")
-        st.caption(
-            f"Thresholds (ERA5 region mean): wind < **{_thr.get('sfcWind', float('nan')):.2f} m/s**, "
-            f"solar < **{_thr.get('rsds', float('nan')):.1f} W/m²**, "
-            f"tas < **{_thr.get('tas', float('nan')):.1f} K**"
-            + (f" · period **{_per[0]}–{_per[1]}**" if _per else "")
-            + f" · minimum spell length **{_meta.get('min_days', 2)} days**"
-        )
-        _cats = ["ERA5", "GCM"] + [mlabel(m) for m, _ in _ev_pairs]
-        _colors = ["black", "#999999"] + [_method_color(m) for m, _ in _ev_pairs]
-        st.caption(
-            "Click a legend entry to show or hide that baseline; "
-            "ERA5 and the raw GCM toggle the same way."
-        )
-
-        def _ev_vals(event: str, stat: str) -> list:
-            base = _base.get(event, {}).get(stat, {})
-            return [base.get("era5"), base.get("gcm")] + [
-                e.get(event, {}).get(stat, {}).get("pred") for _, e in _ev_pairs]
-
-        _panels = [
-            ("dunkelflaute",  "count",         "Dunkelflaute — number of events"),
-            ("dunkelflaute",  "mean_duration", "Dunkelflaute — mean duration (days)"),
-            ("cold_low_wind", "count",         "Cold & calm — number of events"),
-            ("cold_low_wind", "mean_duration", "Cold & calm — mean duration (days)"),
-        ]
-        _cols = st.columns(2)
-        for _i, (_evname, _stat, _title) in enumerate(_panels):
-            with _cols[_i % 2]:
-                _vals = [v if v is not None else np.nan
-                         for v in _ev_vals(_evname, _stat)]
-                _f = go.Figure(data=[
-                    go.Bar(name=cat, x=[cat], y=[val], marker_color=color)
-                    for cat, val, color in zip(_cats, _vals, _colors)
-                ])
-                _f.update_layout(
-                    title=_title,
-                    yaxis_title="Events" if _stat == "count" else "Days",
-                    height=380, margin=dict(t=50, b=140, l=10, r=10),
-                    showlegend=True,
-                    legend=dict(orientation="h", yanchor="top", y=-0.30,
-                                font=dict(size=11)),
-                )
-                st.plotly_chart(_f, width="stretch", key=f"event_{_evname}_{_stat}")
-
-        # ── Why these counts? (tools/energy_event_factors.py) ────────────────
-        try:
-            _fac = json.loads((RESULTS_DIR / "bicubic" / "plots" / "energy_event_factors.json").read_text())
-        except (OSError, ValueError):
-            _fac = None
-        if _fac is not None:
-            st.markdown("#### Why these counts?")
-            _ev_names = {"dunkelflaute": "Dunkelflaute", "cold_low_wind": "Cold & calm"}
-            _evk = st.radio("Event", list(_ev_names), format_func=_ev_names.get, horizontal=True,
-                            key="evf_event")
-            _va, _vb = _fac["meta"]["events"][_evk]
-            _low = {"sfcWind": "low-wind", "rsds": "low-solar", "tas": "cold"}
-            st.caption(
-                "The number of events is exactly the number of days × five factors: share of "
-                f"{_low[_va]} days × share of {_low[_vb]} days × **dependence** (how often both "
-                "happen on the same day, divided by what independence would give) × **share of "
-                "these joint days in spells** of 2 days or more ÷ **mean spell length**. Each "
-                "factor is shown relative to ERA5 (first row: ERA5's own values); multiplied, "
-                "they give the ratio of events in the last column. Red = this factor gives more "
-                "events than in ERA5, blue = fewer."
-            )
-            _fe = _fac["events"][_evk]
-            _rows = [m for m in sorted(sel_methods, key=lambda m: m != "bicubic")
-                     if m in _fe["methods"]]
-            # the factors are precomputed: a cell fetched again since must not disagree with the bars
-            _stale = [m for m in _rows
-                      if ((plot_data.get(m) or {}).get("_events") or {}).get(_evk, {}).get(
-                          "count", {}).get("pred") != _fe["methods"][m]["pred"]["events"]]
-            if _stale:
-                st.warning("Factors out of date for " + ", ".join(mlabel(m) for m in _stale)
-                           + (" — rerun tools/energy_event_factors.py." if DEV_NOTES else "."))
-                _rows = [m for m in _rows if m not in _stale]
-            _cols_fac = [f"{_low[_va]} days", f"{_low[_vb]} days", "dependence",
-                         "joint days in spells", "÷ spell length", "= events"]
-
-            def _rel(p, e):
-                def r(a, b):
-                    return a / b if a is not None and b else None
-                ev = r(p["events"], e["events"])
-                return [r(p["p_a"], e["p_a"]), r(p["p_b"], e["p_b"]),
-                        r(p["dependence"], e["dependence"]),
-                        r(p["spell_share"], e["spell_share"]),
-                        r(e["mean_length"], p["mean_length"]), ev]
-
-            _E = _fe["era5"]
-            _z = [[0.0] * 6]
-            _txt = [[f"{100 * _E['p_a']:.0f}%", f"{100 * _E['p_b']:.0f}%", f"{_E['dependence']:.2f}",
-                     f"{100 * _E['spell_share']:.0f}%" if _E["spell_share"] is not None else "—",
-                     f"{_E['mean_length']:.1f} d" if _E["mean_length"] else "—", f"{_E['events']}"]]
-            _hov = [[f"ERA5 · {c}" for c in _cols_fac]]
-            _abs_keys = ["p_a", "p_b", "dependence", "spell_share", "mean_length", "events"]
-            for m in _rows:
-                p_, e_ = _fe["methods"][m]["pred"], _fe["methods"][m]["era5"]
-                rel = _rel(p_, e_)
-                # log scale; 0 (no event) floored so it shows as the strongest blue
-                _z.append([np.log2(max(x, 1 / 8)) if x is not None else np.nan for x in rel])
-                _txt.append([(f"×{x:.2f}" if x is not None else "—") for x in rel[:5]]
-                            + [f"×{rel[5]:.2f} ({p_['events']})" if rel[5] is not None
-                               else f"({p_['events']})"])
-                _hov.append([f"{mlabel(m)} · {c}: {p_[k]:.3g} (ERA5 {e_[k]:.3g})"
-                             if p_[k] is not None and e_[k] is not None else f"{mlabel(m)} · {c}: —"
-                             for c, k in zip(_cols_fac, _abs_keys)])
-            _ylab = ["ERA5"] + [("GCM (bicubic)" if m == "bicubic" else mlabel(m)) for m in _rows]
-            _l3 = float(np.log2(3))
-            _fh = go.Figure(go.Heatmap(
-                z=_z, x=_cols_fac, y=_ylab, text=_txt, texttemplate="%{text}",
-                hovertext=_hov, hoverinfo="text", colorscale="RdBu_r", zmid=0, zmin=-_l3, zmax=_l3,
-                xgap=2, ygap=2,
-                colorbar=dict(title="vs ERA5", tickvals=[-_l3, -1, 0, 1, _l3],
-                              ticktext=["÷3", "÷2", "×1", "×2", "×3"]),
-            ))
-            _fh.update_layout(height=60 + 34 * len(_ylab), margin=dict(t=30, b=10, l=10, r=10),
-                              yaxis=dict(autorange="reversed"), xaxis=dict(side="top"))
-            st.plotly_chart(_fh, width="stretch", key=f"evf_table_{_evk}")
-
-            # Day-by-day view of the two variables, ERA5 against one source
-            try:
-                with np.load(RESULTS_DIR / "bicubic" / "plots" / "energy_event_series.npz") as _z_npz:
-                    _ser = {k: _z_npz[k] for k in _z_npz.files}
-            except (OSError, ValueError, zipfile.BadZipFile):
-                _ser = None
-            if _ser is not None and _rows:
-                _sc = st.columns([3, 3])
-                with _sc[0]:
-                    _src_m = st.selectbox(
-                        "Compare ERA5 with", _rows,
-                        format_func=lambda m: "GCM (bicubic)" if m == "bicubic" else mlabel(m),
-                        key="evf_src")
-                _seasons = {"Nov–Feb": (11, 12, 1, 2), "May–Aug": (5, 6, 7, 8),
-                            "All year": tuple(range(1, 13))}
-                with _sc[1]:
-                    _season = st.radio("Season", list(_seasons), horizontal=True,
-                                       index=1 if _selected == "australia" else 0, key="evf_season")
-                # the thresholds behind this source's count: ERA5 percentiles on its dates
-                _ta, _tb = (_fe["methods"][_src_m].get("thresholds")
-                            or [_fac["meta"]["thresholds"][_va], _fac["meta"]["thresholds"][_vb]])
-                _unit = {"sfcWind": "m/s", "rsds": "W/m²", "tas": "K"}
-                _src_dates = np.asarray(_ser[f"{_src_m}|date"])
-
-                def _pick(src):
-                    d = np.asarray(_ser[f"{src}|date"])
-                    k = np.isin((d // 100) % 100, _seasons[_season])
-                    if src == "era5":
-                        k &= np.isin(d, _src_dates)
-                    return np.asarray(_ser[f"{src}|{_va}"])[k], np.asarray(_ser[f"{src}|{_vb}"])[k]
-
-                _src_lab = "GCM (bicubic)" if _src_m == "bicubic" else mlabel(_src_m)
-                _fs = go.Figure()
-                _stats = []
-                for src, lab, col, op in (("era5", "ERA5", "#444444", 0.3),
-                                          (_src_m, _src_lab, _method_color(_src_m), 0.6)):
-                    a, b = _pick(src)
-                    la, lb = a < _ta, b < _tb
-                    joint = la & lb
-                    with np.errstate(invalid="ignore", divide="ignore"):
-                        dep = joint.mean() / (la.mean() * lb.mean())
-                    _stats.append((lab, int(joint.sum()), a.size, dep,
-                                   float(np.corrcoef(a, b)[0, 1]) if a.size > 2 else float("nan")))
-                    _fs.add_trace(go.Scattergl(x=a, y=b, mode="markers", name=lab,
-                                               marker=dict(size=4, color=col, opacity=op)))
-                _fs.add_shape(type="rect", xref="x", yref="y", layer="below", line_width=0,
-                              x0=-1e9, x1=_ta, y0=-1e9, y1=_tb, fillcolor="rgba(70,110,200,0.10)")
-                _fs.add_vline(x=_ta, line_dash="dash", line_width=1, line_color="#666")
-                _fs.add_hline(y=_tb, line_dash="dash", line_width=1, line_color="#666")
-                _xs = np.concatenate([_pick(s)[0] for s in ("era5", _src_m)])
-                _ys = np.concatenate([_pick(s)[1] for s in ("era5", _src_m)])
-
-                def _pad(v):
-                    return (float(np.nanmin(v)) - 0.03 * np.ptp(v),
-                            float(np.nanmax(v)) + 0.03 * np.ptp(v))
-                _fs.update_layout(
-                    height=480, margin=dict(t=30, b=40, l=10, r=10),
-                    xaxis=dict(title=f"{_va} region mean ({_unit[_va]})", range=_pad(_xs)),
-                    yaxis=dict(title=f"{_vb} region mean ({_unit[_vb]})", range=_pad(_ys)),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0),
-                )
-                st.plotly_chart(_fs, width="stretch", key=f"evf_scatter_{_evk}")
-                (l0, j0, n0, d0, r0), (l1, j1, n1, d1, r1) = _stats
-                st.caption(
-                    f"{_season} days, 2000–2020. Dashed lines: the ERA5 20th percentiles; the "
-                    f"shaded box holds the joint days ({_low[_va]} and {_low[_vb]}): "
-                    f"**{l0} {j0}** of {n0} days, **{l1} {j1}** of {n1}. Their number depends on "
-                    "how many days fall below each line and on the dependence, here "
-                    f"**{l0} ×{d0:.2f}**, **{l1} ×{d1:.2f}** of what independence would give in "
-                    "this season; the table above separates the two. Correlation over all the "
-                    f"season's days: {l0} {r0:+.2f}, {l1} {r1:+.2f}."
-                )
+    st.caption("Compound events of the electricity system (Dunkelflaute, cold–calm spells) are in the ⚡ Impact: electricity tab.")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tab 6 — Load Forecasting (TAM). Region-aware: france has the full set of
+# Tab 6 — Impact: electricity (net load through TAM, then compound events). Region-aware: france has the full set of
 # spatial-representation fixture files; us_central currently ships the
 # full-grid-PCA lens only (net_lens_region.py output).
 # ══════════════════════════════════════════════════════════════════════════════
 if tab_load is not None:
     with tab_load:
-        st.subheader("Evaluating Climate Downscaling Through a Net-Load Lens (TAM)")
+        st.markdown(
+            "**Impact model: electricity.** The benchmark's first impact model, in two views: "
+            "net load through a fixed forecaster (TAM), then the compound events of the "
+            "electricity system (further down)."
+        )
+        st.subheader("Net load (TAM)")
         st.caption(
             "Downstream evaluation of climate downscaling via a fixed Time series Additive Model (TAM) "
             "forecasting daily net load: NetDemand = load − wind − solar. "
@@ -3304,3 +3159,221 @@ if tab_load is not None:
                 )
             else:
                 st.info("No TAM metrics available for this selection.")
+
+        # ── Energy events (Dunkelflaute / cold–calm spells) ──────────────────────
+        st.markdown("---")
+        st.subheader("Compound events of the electricity system — Dunkelflaute & cold–calm spells")
+        st.caption(
+            "Days when the region mean is low in wind AND low in solar (Dunkelflaute), "
+            "or cold AND calm (heating demand meets weak wind generation). "
+            "Thresholds are the 20th percentile of the ERA5 daily region mean, applied "
+            "unchanged to the GCM and to every downscaled product so the three are "
+            "classified with the same absolute cutoffs; a spell counts as an event "
+            "from 2 consecutive days on."
+        )
+        _ev_pairs = [(m, (plot_data.get(m) or {}).get("_events")) for m in sel_methods]
+        _ev_pairs = [(m, e) for m, e in _ev_pairs if e]
+        if not _ev_pairs:
+            if DEV_NOTES:
+                st.info(
+                    "No energy-event data yet — run "
+                    "`python src/evaluation/backfill_energy.py` or re-run evaluate.py."
+                )
+            else:
+                st.info("No energy-event data for this selection.")
+        else:
+            _base = _ev_pairs[0][1]
+            _meta = _base.get("meta", {})
+            _thr = _meta.get("thresholds", {})
+            _per = _meta.get("period")
+            st.caption(
+                f"Thresholds (ERA5 region mean): wind < **{_thr.get('sfcWind', float('nan')):.2f} m/s**, "
+                f"solar < **{_thr.get('rsds', float('nan')):.1f} W/m²**, "
+                f"tas < **{_thr.get('tas', float('nan')):.1f} K**"
+                + (f" · period **{_per[0]}–{_per[1]}**" if _per else "")
+                + f" · minimum spell length **{_meta.get('min_days', 2)} days**"
+            )
+            _cats = ["ERA5", "GCM"] + [mlabel(m) for m, _ in _ev_pairs]
+            _colors = ["black", "#999999"] + [_method_color(m) for m, _ in _ev_pairs]
+            st.caption(
+                "Click a legend entry to show or hide that baseline; "
+                "ERA5 and the raw GCM toggle the same way."
+            )
+
+            def _ev_vals(event: str, stat: str) -> list:
+                base = _base.get(event, {}).get(stat, {})
+                return [base.get("era5"), base.get("gcm")] + [
+                    e.get(event, {}).get(stat, {}).get("pred") for _, e in _ev_pairs]
+
+            _panels = [
+                ("dunkelflaute",  "count",         "Dunkelflaute — number of events"),
+                ("dunkelflaute",  "mean_duration", "Dunkelflaute — mean duration (days)"),
+                ("cold_low_wind", "count",         "Cold & calm — number of events"),
+                ("cold_low_wind", "mean_duration", "Cold & calm — mean duration (days)"),
+            ]
+            _cols = st.columns(2)
+            for _i, (_evname, _stat, _title) in enumerate(_panels):
+                with _cols[_i % 2]:
+                    _vals = [v if v is not None else np.nan
+                             for v in _ev_vals(_evname, _stat)]
+                    _f = go.Figure(data=[
+                        go.Bar(name=cat, x=[cat], y=[val], marker_color=color)
+                        for cat, val, color in zip(_cats, _vals, _colors)
+                    ])
+                    _f.update_layout(
+                        title=_title,
+                        yaxis_title="Events" if _stat == "count" else "Days",
+                        height=380, margin=dict(t=50, b=140, l=10, r=10),
+                        showlegend=True,
+                        legend=dict(orientation="h", yanchor="top", y=-0.30,
+                                    font=dict(size=11)),
+                    )
+                    st.plotly_chart(_f, width="stretch", key=f"event_{_evname}_{_stat}")
+
+            # ── Why these counts? (tools/energy_event_factors.py) ────────────────
+            try:
+                _fac = json.loads((RESULTS_DIR / "bicubic" / "plots" / "energy_event_factors.json").read_text())
+            except (OSError, ValueError):
+                _fac = None
+            if _fac is not None:
+                st.markdown("#### Why these counts?")
+                _ev_names = {"dunkelflaute": "Dunkelflaute", "cold_low_wind": "Cold & calm"}
+                _evk = st.radio("Event", list(_ev_names), format_func=_ev_names.get, horizontal=True,
+                                key="evf_event")
+                _va, _vb = _fac["meta"]["events"][_evk]
+                _low = {"sfcWind": "low-wind", "rsds": "low-solar", "tas": "cold"}
+                st.caption(
+                    "The number of events is exactly the number of days × five factors: share of "
+                    f"{_low[_va]} days × share of {_low[_vb]} days × **dependence** (how often both "
+                    "happen on the same day, divided by what independence would give) × **share of "
+                    "these joint days in spells** of 2 days or more ÷ **mean spell length**. Each "
+                    "factor is shown relative to ERA5 (first row: ERA5's own values); multiplied, "
+                    "they give the ratio of events in the last column. Red = this factor gives more "
+                    "events than in ERA5, blue = fewer."
+                )
+                _fe = _fac["events"][_evk]
+                _rows = [m for m in sorted(sel_methods, key=lambda m: m != "bicubic")
+                         if m in _fe["methods"]]
+                # the factors are precomputed: a cell fetched again since must not disagree with the bars
+                _stale = [m for m in _rows
+                          if ((plot_data.get(m) or {}).get("_events") or {}).get(_evk, {}).get(
+                              "count", {}).get("pred") != _fe["methods"][m]["pred"]["events"]]
+                if _stale:
+                    st.warning("Factors out of date for " + ", ".join(mlabel(m) for m in _stale)
+                               + (" — rerun tools/energy_event_factors.py." if DEV_NOTES else "."))
+                    _rows = [m for m in _rows if m not in _stale]
+                _cols_fac = [f"{_low[_va]} days", f"{_low[_vb]} days", "dependence",
+                             "joint days in spells", "÷ spell length", "= events"]
+
+                def _rel(p, e):
+                    def r(a, b):
+                        return a / b if a is not None and b else None
+                    ev = r(p["events"], e["events"])
+                    return [r(p["p_a"], e["p_a"]), r(p["p_b"], e["p_b"]),
+                            r(p["dependence"], e["dependence"]),
+                            r(p["spell_share"], e["spell_share"]),
+                            r(e["mean_length"], p["mean_length"]), ev]
+
+                _E = _fe["era5"]
+                _z = [[0.0] * 6]
+                _txt = [[f"{100 * _E['p_a']:.0f}%", f"{100 * _E['p_b']:.0f}%", f"{_E['dependence']:.2f}",
+                         f"{100 * _E['spell_share']:.0f}%" if _E["spell_share"] is not None else "—",
+                         f"{_E['mean_length']:.1f} d" if _E["mean_length"] else "—", f"{_E['events']}"]]
+                _hov = [[f"ERA5 · {c}" for c in _cols_fac]]
+                _abs_keys = ["p_a", "p_b", "dependence", "spell_share", "mean_length", "events"]
+                for m in _rows:
+                    p_, e_ = _fe["methods"][m]["pred"], _fe["methods"][m]["era5"]
+                    rel = _rel(p_, e_)
+                    # log scale; 0 (no event) floored so it shows as the strongest blue
+                    _z.append([np.log2(max(x, 1 / 8)) if x is not None else np.nan for x in rel])
+                    _txt.append([(f"×{x:.2f}" if x is not None else "—") for x in rel[:5]]
+                                + [f"×{rel[5]:.2f} ({p_['events']})" if rel[5] is not None
+                                   else f"({p_['events']})"])
+                    _hov.append([f"{mlabel(m)} · {c}: {p_[k]:.3g} (ERA5 {e_[k]:.3g})"
+                                 if p_[k] is not None and e_[k] is not None else f"{mlabel(m)} · {c}: —"
+                                 for c, k in zip(_cols_fac, _abs_keys)])
+                _ylab = ["ERA5"] + [("GCM (bicubic)" if m == "bicubic" else mlabel(m)) for m in _rows]
+                _l3 = float(np.log2(3))
+                _fh = go.Figure(go.Heatmap(
+                    z=_z, x=_cols_fac, y=_ylab, text=_txt, texttemplate="%{text}",
+                    hovertext=_hov, hoverinfo="text", colorscale="RdBu_r", zmid=0, zmin=-_l3, zmax=_l3,
+                    xgap=2, ygap=2,
+                    colorbar=dict(title="vs ERA5", tickvals=[-_l3, -1, 0, 1, _l3],
+                                  ticktext=["÷3", "÷2", "×1", "×2", "×3"]),
+                ))
+                _fh.update_layout(height=60 + 34 * len(_ylab), margin=dict(t=30, b=10, l=10, r=10),
+                                  yaxis=dict(autorange="reversed"), xaxis=dict(side="top"))
+                st.plotly_chart(_fh, width="stretch", key=f"evf_table_{_evk}")
+
+                # Day-by-day view of the two variables, ERA5 against one source
+                try:
+                    with np.load(RESULTS_DIR / "bicubic" / "plots" / "energy_event_series.npz") as _z_npz:
+                        _ser = {k: _z_npz[k] for k in _z_npz.files}
+                except (OSError, ValueError, zipfile.BadZipFile):
+                    _ser = None
+                if _ser is not None and _rows:
+                    _sc = st.columns([3, 3])
+                    with _sc[0]:
+                        _src_m = st.selectbox(
+                            "Compare ERA5 with", _rows,
+                            format_func=lambda m: "GCM (bicubic)" if m == "bicubic" else mlabel(m),
+                            key="evf_src")
+                    _seasons = {"Nov–Feb": (11, 12, 1, 2), "May–Aug": (5, 6, 7, 8),
+                                "All year": tuple(range(1, 13))}
+                    with _sc[1]:
+                        _season = st.radio("Season", list(_seasons), horizontal=True,
+                                           index=1 if _selected == "australia" else 0, key="evf_season")
+                    # the thresholds behind this source's count: ERA5 percentiles on its dates
+                    _ta, _tb = (_fe["methods"][_src_m].get("thresholds")
+                                or [_fac["meta"]["thresholds"][_va], _fac["meta"]["thresholds"][_vb]])
+                    _unit = {"sfcWind": "m/s", "rsds": "W/m²", "tas": "K"}
+                    _src_dates = np.asarray(_ser[f"{_src_m}|date"])
+
+                    def _pick(src):
+                        d = np.asarray(_ser[f"{src}|date"])
+                        k = np.isin((d // 100) % 100, _seasons[_season])
+                        if src == "era5":
+                            k &= np.isin(d, _src_dates)
+                        return np.asarray(_ser[f"{src}|{_va}"])[k], np.asarray(_ser[f"{src}|{_vb}"])[k]
+
+                    _src_lab = "GCM (bicubic)" if _src_m == "bicubic" else mlabel(_src_m)
+                    _fs = go.Figure()
+                    _stats = []
+                    for src, lab, col, op in (("era5", "ERA5", "#444444", 0.3),
+                                              (_src_m, _src_lab, _method_color(_src_m), 0.6)):
+                        a, b = _pick(src)
+                        la, lb = a < _ta, b < _tb
+                        joint = la & lb
+                        with np.errstate(invalid="ignore", divide="ignore"):
+                            dep = joint.mean() / (la.mean() * lb.mean())
+                        _stats.append((lab, int(joint.sum()), a.size, dep,
+                                       float(np.corrcoef(a, b)[0, 1]) if a.size > 2 else float("nan")))
+                        _fs.add_trace(go.Scattergl(x=a, y=b, mode="markers", name=lab,
+                                                   marker=dict(size=4, color=col, opacity=op)))
+                    _fs.add_shape(type="rect", xref="x", yref="y", layer="below", line_width=0,
+                                  x0=-1e9, x1=_ta, y0=-1e9, y1=_tb, fillcolor="rgba(70,110,200,0.10)")
+                    _fs.add_vline(x=_ta, line_dash="dash", line_width=1, line_color="#666")
+                    _fs.add_hline(y=_tb, line_dash="dash", line_width=1, line_color="#666")
+                    _xs = np.concatenate([_pick(s)[0] for s in ("era5", _src_m)])
+                    _ys = np.concatenate([_pick(s)[1] for s in ("era5", _src_m)])
+
+                    def _pad(v):
+                        return (float(np.nanmin(v)) - 0.03 * np.ptp(v),
+                                float(np.nanmax(v)) + 0.03 * np.ptp(v))
+                    _fs.update_layout(
+                        height=480, margin=dict(t=30, b=40, l=10, r=10),
+                        xaxis=dict(title=f"{_va} region mean ({_unit[_va]})", range=_pad(_xs)),
+                        yaxis=dict(title=f"{_vb} region mean ({_unit[_vb]})", range=_pad(_ys)),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0),
+                    )
+                    st.plotly_chart(_fs, width="stretch", key=f"evf_scatter_{_evk}")
+                    (l0, j0, n0, d0, r0), (l1, j1, n1, d1, r1) = _stats
+                    st.caption(
+                        f"{_season} days, 2000–2020. Dashed lines: the ERA5 20th percentiles; the "
+                        f"shaded box holds the joint days ({_low[_va]} and {_low[_vb]}): "
+                        f"**{l0} {j0}** of {n0} days, **{l1} {j1}** of {n1}. Their number depends on "
+                        "how many days fall below each line and on the dependence, here "
+                        f"**{l0} ×{d0:.2f}**, **{l1} ×{d1:.2f}** of what independence would give in "
+                        "this season; the table above separates the two. Correlation over all the "
+                        f"season's days: {l0} {r0:+.2f}, {l1} {r1:+.2f}."
+                    )
