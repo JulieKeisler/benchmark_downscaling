@@ -190,3 +190,18 @@ class TestQDMWindowed:
         g = proj.sel(time=slice("2080", "2100")).mean().item() - proj.sel(time=slice("2000", "2020")).mean().item()
         assert abs((late - early) / g - 1) < 0.02
         assert abs(out.sel(time=slice("2000", "2009")).mean().item() - 280.25) < 0.15
+
+
+class TestLoadERA5:
+
+    def test_pr_clipped_at_zero(self, tmp_path):
+        # ERA5 daily pr in m with small negative values, as in the WB2 crops
+        t = pd.date_range("2000-01-01", periods=4, freq="D")
+        vals = np.array([-1e-6, 0.0, 2e-3, -5e-7]).reshape(4, 1, 1)
+        xr.Dataset({"pr": (("time", "latitude", "longitude"), vals)},
+                   coords={"time": t, "latitude": [45.0], "longitude": [2.0]}
+                   ).to_netcdf(tmp_path / "pr_2000.nc")
+        from data_processing import load_era5
+        da = load_era5(tmp_path, "pr", 2000, 2000)
+        assert float(da.min()) == 0.0
+        assert np.isclose(float(da.max()), 2.0)   # m -> mm/day

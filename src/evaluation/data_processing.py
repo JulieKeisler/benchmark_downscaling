@@ -98,7 +98,9 @@ def load_era5(era5_dir: Path, variable: str, start: int, end: int) -> xr.DataArr
     parts = [_rename_coords(xr.open_dataset(f))[variable] for f in files]
     da = xr.concat(parts, dim="time")
     if variable == "pr":
-        da = _era5_pr_convert(da)
+        # ERA5 precipitation has small negative values; left in, they put a floor
+        # under the KS distance of every product clipped at zero.
+        da = _era5_pr_convert(da).clip(min=0.0)
     return da.load()
 
 
