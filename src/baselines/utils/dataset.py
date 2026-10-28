@@ -1,7 +1,7 @@
 """Unified ERA5 dataset for the neural baselines.
 
 mode="idownscale"
-    x_in  = coarsened ERA5 (stride× subsample + bicubic upsample)
+    x_in  = coarsened ERA5 (bilinear onto a stride× coarser grid, then bicubic upsample)
     x_target = full ERA5
 
 mode="consistency"
@@ -22,7 +22,7 @@ VALID_MODES = ("idownscale", "consistency")
 
 
 def _coarsen_upsample(data: np.ndarray, stride: int) -> np.ndarray:
-    """Subsample by stride then bicubic upsample. data: [T, C, H, W] float32."""
+    """Bilinear onto a grid stride times coarser, then bicubic back up. data: [T, C, H, W] float32."""
     T, C, H, W = data.shape
     H_c, W_c = H // stride, W // stride
     x = torch.from_numpy(data).view(T * C, 1, H, W)

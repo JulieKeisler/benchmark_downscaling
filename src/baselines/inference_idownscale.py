@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """iDownscale — CERFACS perfect-prognosis U-Net downscaling.
 
-Train on: ERA5 coarsened (4× subsample → bicubic up) → ERA5 fine.
+Train on: ERA5 coarsened (bilinear onto a 4× coarser grid → bicubic up) → ERA5 fine.
 Infer on: GCM (after coarse-scale CDF-t bias correction) → fine ERA5 grid.
 
 Architecture: plain UNet(7→5), deterministic regression. No t conditioning.

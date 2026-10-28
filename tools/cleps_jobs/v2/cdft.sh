@@ -6,7 +6,8 @@
 #SBATCH --time=24:00:00
 #SBATCH --output=/scratch/jkeisler/benchmark_downscaling/logs_v2/%x_%j.out
 #SBATCH --error=/scratch/jkeisler/benchmark_downscaling/logs_v2/%x_%j.err
-# CDF-t (US r4 rerun; v1 code path, GCM from 2000 as in v1).
+# CDF-t (US r4 rerun): calibrated on 1980-1999, corrects the GCM over 2000-2100 in
+# 20-year windows moved by 10 years.
 # Submit: sbatch --job-name=v2_cdft_$REGION --export=ALL,REGION=us_central cdft.sh
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate sbck-gpu
