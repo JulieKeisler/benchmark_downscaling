@@ -93,8 +93,9 @@ python src/evaluation/evaluate.py \
     --end      2020
 ```
 
-Pass `--gcm-end 2100` if your predictions extend to 2100, to unlock the
-delta-change scores (warming signal preservation metrics).
+The scores against the GCM, including the delta-change scores (warming signal
+preservation metrics), run from `--start` to `--gcm-end` (default 2099), so the
+predictions must cover that period.
 
 Output lands in `results/my_method/`:
 - `metrics.json` — all scalar scores

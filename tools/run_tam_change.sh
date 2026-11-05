@@ -1,6 +1,6 @@
 #!/bin/bash
-# Net-load lens on the change (2000-2020 -> 2080-2100, against the bicubic GCM), 9 pairs, local.
-# Inputs: results/v2_tam (2000-2022 crops), results/v2_tam2100 (2080-2100 crops, tools/crop_predictions.py),
+# Net-load lens on the change (2000-2020 -> 2080-2099, against the bicubic GCM), 9 pairs, local.
+# Inputs: results/v2_tam (2000-2022 crops), results/v2_tam2100 (2080-2100 crops, tools/crop_predictions.py; the lens keeps 2080-2099),
 # results/tam_v2 (the published lens, for the same-TAM check).
 # Output: results/tam_v2_change/metrics_change_<region>[_<gcm>].json
 # Usage: [OUT=<dir>] [FUTURE=<root>] bash tools/run_tam_change.sh [region:gcm ...]

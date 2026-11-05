@@ -2,12 +2,13 @@
 """Tripwire: a finished method run is complete and finite.
 
 Checks `<method_dir>/metrics.json`: every expected variable has finite values
-for every vs_obs and vs_gcm metric and both change periods; and the
-predictions cover 2000-01-01..2100-12-31 with the expected variables.
+for every vs_obs and vs_gcm metric and both change periods (2040_2060 and
+2080_<gcm-end>, and no other); and the predictions cover 2000-01-01..2100-12-31
+with the expected variables (inference runs to 2100 even when scoring stops earlier).
 Exits non-zero on any failure.
 
 Usage:
-    python tools/check_results.py results_v2/france/dotc --variables tas pr psl sfcWind sfcWindmax rsds
+    python tools/check_results.py results_v2/france/dotc --variables tas pr psl sfcWind sfcWindmax rsds --gcm-end 2099
 """
 from __future__ import annotations
 
@@ -23,15 +24,16 @@ VS_OBS = ["bias_mae", "std_error", "ks_full", "ks_q95", "seasonal_mae",
           "extreme_freq", "extreme_intensity", "spectral_mae",
           "spectral_fine", "spectral_fine_bias"]
 VS_GCM = ["temporal_corr", "temporal_corr_annual", "annual_anomaly_bias", "lag1_autocorr_mae"]
-DELTA_PERIODS = ["2040_2060", "2080_2100"]
 
 
 def _finite(x) -> bool:
     return isinstance(x, (int, float)) and math.isfinite(x)
 
 
-def check(method_dir: Path, variables: list[str], pred_dir: Path | None = None) -> list[str]:
+def check(method_dir: Path, variables: list[str], pred_dir: Path | None = None,
+          gcm_end: int = 2099) -> list[str]:
     fails = []
+    delta_periods = ["2040_2060", f"2080_{gcm_end}"]
     mfile = method_dir / "metrics.json"
     if not mfile.exists():
         return [f"missing {mfile}"]
@@ -46,9 +48,11 @@ def check(method_dir: Path, variables: list[str], pred_dir: Path | None = None) 
                 if not _finite(block.get(grp, {}).get(k)):
                     fails.append(f"{var}.{grp}.{k} = {block.get(grp, {}).get(k)!r}")
         delta = m.get("_delta", {}).get(var, {})
-        for per in DELTA_PERIODS:
+        for per in delta_periods:
             if not _finite(delta.get(per)):
                 fails.append(f"_delta.{var}.{per} = {delta.get(per)!r}")
+        if set(delta) - set(delta_periods):   # e.g. a 2080_2100 left from another --gcm-end
+            fails.append(f"_delta.{var} has {sorted(set(delta) - set(delta_periods))}")
     pred_dir = pred_dir or method_dir
     dates = pred_dir / "eval_dates.npy"
     if dates.exists():
@@ -83,9 +87,11 @@ def main():
     p.add_argument("--variables", nargs="+", required=True)
     p.add_argument("--pred-dir", default=None,
                    help="where predictions live when evaluated into another dir")
+    p.add_argument("--gcm-end", type=int, default=2099,
+                   help="last year scored against the GCM (sets the late change period)")
     args = p.parse_args()
     fails = check(Path(args.method_dir), args.variables,
-                  Path(args.pred_dir) if args.pred_dir else None)
+                  Path(args.pred_dir) if args.pred_dir else None, args.gcm_end)
     if fails:
         print(f"TRIPWIRE FAILED for {args.method_dir}:\n  " + "\n  ".join(fails[:40]))
         sys.exit(1)

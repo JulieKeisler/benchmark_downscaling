@@ -102,7 +102,7 @@ _PIPELINE_HTML = """
   <div style="display:flex; align-items:center; color:#555; font-size:22px; font-weight:bold">→</div>
   <div style="background:#2ca02c; color:#fff; border-radius:8px; padding:10px 14px; width:180px; text-align:center">
     <div style="font-size:20px; font-weight:bold">Predictions</div>
-    <div style="font-size:12px; opacity:.95">≈0.25° · 57×65<br>2000–2100</div>
+    <div style="font-size:12px; opacity:.95">≈0.25° · 57×65<br>2000–2099</div>
   </div>
   <div style="display:flex; align-items:center; color:#555; font-size:22px; font-weight:bold">→</div>
   <div style="background:#9467bd; color:#fff; border-radius:8px; padding:10px 14px; width:200px; text-align:center">
@@ -485,13 +485,13 @@ METRIC_DOCS = {
         "name": "Temporal corr annual",
         "group": "vs GCM",
         "simple": "Pearson correlation of annual-mean anomalies vs the GCM — how well the forced year-to-year signal is preserved. Higher is better.",
-        "detailed": "Spatial mean of per-cell correlations between annual means of the prediction and of the bicubic-interpolated GCM over 2000–2100 (so it includes the forced trend). Bicubic scores 1 by construction.",
+        "detailed": "Spatial mean of per-cell correlations between annual means of the prediction and of the bicubic-interpolated GCM over 2000–2099 (so it includes the forced trend). Bicubic scores 1 by construction.",
         "eq": r"r\!\left( \mathrm{anom}_{pred},\ \mathrm{anom}_{GCM} \right)",
     },
     "temporal_corr": {
         "name": "Temporal corr daily",
         "group": "vs GCM",
-        "simple": "Pearson daily temporal correlation vs the bicubic-interpolated GCM over 2000–2100 (1 for bicubic by construction).",
+        "simple": "Pearson daily temporal correlation vs the bicubic-interpolated GCM over 2000–2099 (1 for bicubic by construction).",
         "detailed": "Monotone per-cell corrections keep it close to 1; methods that inject noise or generate fine-scale detail lower it. A low value is not by itself an error, since the GCM's individual days are not the target — prefer temporal corr annual for signal preservation.",
         "eq": "",
     },
@@ -516,11 +516,11 @@ METRIC_DOCS = {
         "detailed": "Per grid cell, Δ = (future mean − 2000–2020 mean) / |2000–2020 mean| × 100. For tas (K) and psl (Pa) the percentage is taken of an absolute temperature or pressure, so values are small (0.1 % of tas ≈ 0.3 K); compare methods within a variable, not across variables.",
         "eq": "",
     },
-    "Δ signal 2080–2100": {
-        "name": "Δ signal 2080–2100",
+    "Δ signal 2080–2099": {
+        "name": "Δ signal 2080–2099",
         "group": "vs GCM",
         "simple": "MAE between the method's and GCM's relative climate change signal at end-of-century.",
-        "detailed": "Same as the 2040–2060 signal but for 2080–2100 vs 2000–2020 (in %, per grid cell).",
+        "detailed": "Same as the 2040–2060 signal but for 2080–2099 vs 2000–2020 (in %, per grid cell).",
         "eq": "",
     },
 }
@@ -737,7 +737,7 @@ METRIC_IMPL = {
     "annual_anomaly_bias":  "src/metrics/scalar_metrics_gcm.py — annual_anomaly_bias",
     "lag1_autocorr_mae":    "src/metrics/scalar_metrics_gcm.py — lag1_autocorr_mae",
     "Δ signal 2040–2060":   "src/metrics/scalar_metrics_gcm.py — delta_change_score (2040_2060)",
-    "Δ signal 2080–2100":   "src/metrics/scalar_metrics_gcm.py — delta_change_score (2080_2100)",
+    "Δ signal 2080–2099":   "src/metrics/scalar_metrics_gcm.py — delta_change_score (2080_2099)",
 }
 
 # Existing downscaling / bias-correction benchmark initiatives this benchmark
@@ -955,7 +955,7 @@ with st.sidebar:
     st.caption(
         f"**Experiment:** {exp_label} · {_gcm_label(_selected_gcm)}  \n"
         "**ERA5:** pseudo-obs (1979–2022)  \n"
-        "**Evaluation period:** 2000–2020 against ERA5 and 2000–2100 for GCM related metrics  \n"
+        "**Evaluation period:** 2000–2020 against ERA5 and 2000–2099 for GCM related metrics  \n"
         "**Variables** chosen for the first impact model, electricity: demand (tas), "
         "wind (sfcWind), solar (rsds), hydro (pr), regimes (psl).  \n"
         f"🔗 [Benchmark GitHub]({GITHUB_URL})"
@@ -982,13 +982,13 @@ OBS_METRICS = [
 GCM_METRICS = [
     "temporal_corr_annual", "temporal_corr",
     "annual_anomaly_bias", "lag1_autocorr_mae",
-    "Δ signal 2040–2060", "Δ signal 2080–2100",
+    "Δ signal 2040–2060", "Δ signal 2080–2099",
 ]
 
 # Maps delta metric key -> _delta period key in metrics.json
 DELTA_PERIOD_MAP = {
     "Δ signal 2040–2060": "2040_2060",
-    "Δ signal 2080–2100": "2080_2100",
+    "Δ signal 2080–2099": "2080_2099",
 }
 
 METRIC_LABELS = {
@@ -1007,7 +1007,7 @@ METRIC_LABELS = {
     "annual_anomaly_bias":  "Annual anomaly bias (vs GCM)",
     "lag1_autocorr_mae":    "Lag-1 autocorr MAE (vs GCM)",
     "Δ signal 2040–2060":   "Δ signal 2040–2060 (vs GCM)",
-    "Δ signal 2080–2100":   "Δ signal 2080–2100 (vs GCM)",
+    "Δ signal 2080–2099":   "Δ signal 2080–2099 (vs GCM)",
 }
 HIGHER_BETTER = {"temporal_corr_annual", "temporal_corr"}
 
@@ -1484,7 +1484,7 @@ with tab_welcome:
                 "compare all methods fairly on the same inputs, the same grid, and the same "
                 "train/test split:\n"
                 f"- **Input (the GCM):** {_wl_gcm}, daily, {GCM_GRIDS.get(_selected_gcm, '')} "
-                "coarse grid; projections evaluated 2000–2100.\n"
+                "coarse grid; projections evaluated 2000–2099.\n"
                 "- **Reference (ground truth):** ERA5 reanalysis, 57×65 grid, "
                 "1979–2022 (France: 1979–2020).\n"
                 "- **Variables:** chosen for the first impact model, electricity — `tas` (2-m "
@@ -1529,7 +1529,7 @@ with tab_welcome:
             f"| **GCM** | {_wl_gcm}; daily; IPSL-CM6A-LR & CNRM-CM6-1 under SSP3-7.0, CESM2 under SSP2-4.5; one run per GCM, the same for historical and scenario (r1i1p1f1, r1i1p1f2, r4i1p1f1) |\n"
             "| **Calibration** | 1980–1999 — distribution baselines fit on the selected GCM; neural baselines trained on ERA5, with a GCM-vs-ERA5 pre-correction at inference |\n"
             "| **Accuracy evaluation** | 2000–2020 vs ERA5 |\n"
-            "| **Fidelity evaluation** | 2000–2100 vs the GCM; Δ-signal 2040–2060 & 2080–2100 |\n"
+            "| **Fidelity evaluation** | 2000–2099 vs the GCM; Δ-signal 2040–2060 & 2080–2099 |\n"
             "| **Impact model (TAM, net load)** | trained 2012–2021 on ERA5 + net load; applied unchanged 2000–2022 |\n"
             "| **Units** | tas K · pr mm/day · sfcWind / sfcWindmax m/s · psl Pa · rsds W/m² |"
         )
@@ -1824,7 +1824,7 @@ with tab_table:
         show_gcm = st.multiselect(
             "vs GCM metrics", GCM_METRICS,
             default=["temporal_corr_annual", "annual_anomaly_bias",
-                     "Δ signal 2040–2060", "Δ signal 2080–2100"],
+                     "Δ signal 2040–2060", "Δ signal 2080–2099"],
             format_func=lambda k: METRIC_LABELS.get(k, k),
         )
 
@@ -2358,7 +2358,7 @@ with tab_maps:
                 "autocorr": "Autocorrelation",
                 "samples": "Sample days",
                 "delta_2040_2060": "Δ climate signal 2040–2060",
-                "delta_2080_2100": "Δ climate signal 2080–2100",
+                "delta_2080_2099": "Δ climate signal 2080–2099",
             }.get(x, x),
             key="map_type",
         )
@@ -2381,14 +2381,14 @@ with tab_maps:
             "autocorr":        f"autocorr_data_{variable}.npz",
             "samples":         f"samples_data_{variable}.npz",
             "delta_2040_2060": f"delta_data_{variable}_2040_2060.npz",
-            "delta_2080_2100": f"delta_data_{variable}_2080_2100.npz",
+            "delta_2080_2099": f"delta_data_{variable}_2080_2099.npz",
         }
         field_map = {
             "bias_map":        "mean_bias",
             "temporal_corr":   "corr",
             "autocorr":        ("ac_pred", "ac_gcm"),  # bias = ac_pred − ac_gcm
             "delta_2040_2060": "pred_delta",
-            "delta_2080_2100": "pred_delta",
+            "delta_2080_2099": "pred_delta",
         }
         f = m_dir / npz_map[ptype]
         if not f.exists():
@@ -2408,7 +2408,7 @@ with tab_maps:
             else:
                 arr = d[spec]
             out = {"arr": arr, "lat": d["lat"], "lon": d["lon"], "gcm": None}
-            if ptype in ("delta_2040_2060", "delta_2080_2100") and "gcm_delta" in d.files:
+            if ptype in ("delta_2040_2060", "delta_2080_2099") and "gcm_delta" in d.files:
                 out["gcm"] = d["gcm_delta"]     # GCM reference overlay
             return out
         except (KeyError, OSError, ValueError):
@@ -2488,7 +2488,7 @@ with tab_maps:
     else:
         # Shared color scale across all selected methods (per variable), including
         # the GCM reference so the Δ maps are directly comparable with it.
-        if plot_type in ("delta_2040_2060", "delta_2080_2100") and maps_data:
+        if plot_type in ("delta_2040_2060", "delta_2080_2099") and maps_data:
             ref = next(iter(maps_data.values()))
             if ref["gcm"] is not None:
                 maps_data = {"GCM": {"arr": ref["gcm"], "lat": ref["lat"],
@@ -2496,7 +2496,7 @@ with tab_maps:
         stacked = [d["arr"] for d in maps_data.values()]
         all_arr = np.stack(stacked)
         finite  = all_arr[np.isfinite(all_arr)]
-        if plot_type in ("bias_map", "autocorr", "delta_2040_2060", "delta_2080_2100"):
+        if plot_type in ("bias_map", "autocorr", "delta_2040_2060", "delta_2080_2099"):
             vmax    = float(np.nanpercentile(np.abs(finite), 98)) if finite.size else 1.0
             vmax    = max(vmax, 1e-9)
             zmin, zmax, cmap, zmid = -vmax, vmax, "RdBu_r", 0.0
@@ -2514,7 +2514,7 @@ with tab_maps:
             cmap=cmap, vmin=zmin, vmax=zmax, cb_label=_cb_label,
             n_cols=maps_per_row, width=_map_width)
 
-        if plot_type in ("delta_2040_2060", "delta_2080_2100"):
+        if plot_type in ("delta_2040_2060", "delta_2080_2099"):
             st.caption("Δ signal = future − historical. Leftmost panel: GCM Δ reference. "
                        "Other panels: per-method Δ signal.")
 

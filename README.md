@@ -209,7 +209,7 @@ python src/evaluation/evaluate.py \
     --method bicubic \
     --pred-dir /path/to/results/bicubic \
     --output-dir /path/to/results \
-    --start 2000 --end 2020 --gcm-end 2100
+    --start 2000 --end 2020 --gcm-end 2099
 ```
 
 **Step 3 — dashboard:**

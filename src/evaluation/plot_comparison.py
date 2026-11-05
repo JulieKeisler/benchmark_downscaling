@@ -367,11 +367,11 @@ def plot_delta_comparison(method_data: dict, variable: str, period: str, out_pat
 # ── Delta change score heatmap ───────────────────────────────────────────────
 
 def plot_delta_heatmap(methods_delta: dict, variables: list[str], out_path: Path) -> None:
-    """Heatmap: rows = methods, columns = variables, two panels for 2040-2060 and 2080-2100."""
+    """Heatmap: rows = methods, columns = variables, two panels for 2040-2060 and 2080-2099."""
     import matplotlib.pyplot as plt
 
-    periods = ["2040_2060", "2080_2100"]
-    period_labels = ["2040–2060", "2080–2100"]
+    periods = ["2040_2060", "2080_2099"]
+    period_labels = ["2040–2060", "2080–2099"]
     methods = list(methods_delta.keys())
     vars_present = [v for v in variables if any(v in methods_delta[m] for m in methods)]
 
@@ -502,7 +502,7 @@ def main(argv=None):
 
     # ── Delta spatial maps ────────────────────────────────────────────────────
     print("\n=== Delta spatial maps ===")
-    for period in ["2040_2060", "2080_2100"]:
+    for period in ["2040_2060", "2080_2099"]:
         for variable in args.variables:
             print(f"\n--- {variable} {period} ---")
             method_data = {}

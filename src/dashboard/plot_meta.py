@@ -42,7 +42,7 @@ MAP_PLOT_TYPES = (
     "autocorr",
     "samples",
     "delta_2040_2060",
-    "delta_2080_2100",
+    "delta_2080_2099",
 )
 
 
@@ -84,7 +84,7 @@ def line_help(var: str, line_type: str) -> str:
         "annual": (
             "Region-mean yearly means: ERA5 over 2000–2020 (grey, dotted), the "
             "bicubic-interpolated driving GCM (black) and each method (dashed) "
-            "over 2000–2100. It shows whether a method keeps the observed level "
+            "over 2000–2099. It shows whether a method keeps the observed level "
             "today and follows the GCM's long-term change; the GCM's individual "
             "years are not synchronised with observed years, so they are not a target. "
             f"Units: {vlabel(var)}."
@@ -145,8 +145,8 @@ def map_help(var: str, plot_type: str) -> str:
             "the others are per-method signals on a shared scale, so a method "
             f"that damps or amplifies the GCM's change is visible. Units: Δ {vlabel(var)}."
         ),
-        "delta_2080_2100": (
-            "Climate signal 2080–2100 vs 2000–2020: Δ = mean(future) − "
+        "delta_2080_2099": (
+            "Climate signal 2080–2099 vs 2000–2020: Δ = mean(future) − "
             "mean(hist) at every grid cell. Leftmost panel is the GCM reference; "
             "the others are per-method signals on a shared scale, so a method "
             f"that damps or amplifies the GCM's change is visible. Units: Δ {vlabel(var)}."
@@ -167,6 +167,6 @@ def colorbar_label(var: str, plot_type: str) -> str:
         "autocorr":        "Δ lag-1 autocorr (unitless)",
         "samples":         vlabel(var),
         "delta_2040_2060": f"Δ {vlabel(var)}",
-        "delta_2080_2100": f"Δ {vlabel(var)}",
+        "delta_2080_2099": f"Δ {vlabel(var)}",
     }
     return labels[plot_type]

@@ -67,7 +67,7 @@ def test_dashboard_caption_rendering():
 
     # Test that map plot captions for all variables include their units
     for var in EXPECTED_UNITS:
-        for map_type in ("bias_map", "samples", "delta_2040_2060", "delta_2080_2100"):
+        for map_type in ("bias_map", "samples", "delta_2040_2060", "delta_2080_2099"):
             caption = plot_meta.map_help(var, map_type)
             assert caption.strip(), f"empty caption for {map_type}"
             assert EXPECTED_UNITS[var] in caption, f"{map_type} caption for {var} lacks unit {EXPECTED_UNITS[var]}"
@@ -100,7 +100,7 @@ def test_vlabel_unknown_variable_does_not_invent_a_unit():
 # Line/map types whose caption must name the variable's physical unit verbatim.
 # `spectra` is excluded: its axes are wavelength (km) and a normalised PSD (a.u.).
 _PHYSICAL_LINE_TYPES = ("seasonal", "doy", "annual", "cdf")
-_PHYSICAL_MAP_TYPES = ("bias_map", "samples", "delta_2040_2060", "delta_2080_2100")
+_PHYSICAL_MAP_TYPES = ("bias_map", "samples", "delta_2040_2060", "delta_2080_2099")
 _UNITLESS_MAP_TYPES = ("temporal_corr", "autocorr")
 
 
@@ -140,7 +140,7 @@ def test_unitless_map_captions_are_marked_unitless(plot_type):
 
 def test_delta_captions_show_change_and_unit():
     # Δ maps show a difference; the caption must say so and name the unit.
-    for pt in ("delta_2040_2060", "delta_2080_2100"):
+    for pt in ("delta_2040_2060", "delta_2080_2099"):
         cap = plot_meta.map_help("tas", pt)
         assert "Δ" in cap
         assert "tas (K)" in cap

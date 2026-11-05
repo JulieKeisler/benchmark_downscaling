@@ -52,6 +52,6 @@ evaluate() {   # evaluate <method-name> <pred-dir> <output-base>
   local name="$1" pred="$2" base="$3"
   python "$V2/src/evaluation/evaluate.py" --era5-dir "$ERA5_DIR" --gcm-dir "$GCM_DIR" \
       --scenario "$SCENARIO" --method "$name" --pred-dir "$pred" --output-dir "$base" \
-      --region "$REGION" --variables $VARS --start 2000 --end 2020 --gcm-end 2100
-  python "$V2/tools/check_results.py" "$base/$name" --pred-dir "$pred" --variables $VARS
+      --region "$REGION" --variables $VARS --start 2000 --end 2020 --gcm-end 2099
+  python "$V2/tools/check_results.py" "$base/$name" --pred-dir "$pred" --variables $VARS --gcm-end 2099
 }

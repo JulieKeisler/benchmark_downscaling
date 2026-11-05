@@ -81,13 +81,26 @@ def test_results_check_fires_on_nan_and_short_period(tmp_path):
     good = {k: 0.1 for k in check_results.VS_OBS}
     gcm = {k: 0.9 for k in check_results.VS_GCM}
     m = {"tas": {"vs_obs": dict(good, spectral_fine=float("nan")), "vs_gcm": gcm},
-         "_delta": {"tas": {"2040_2060": 0.1, "2080_2100": 0.2}}}
+         "_delta": {"tas": {"2040_2060": 0.1, "2080_2099": 0.2}}}
     (tmp_path / "metrics.json").write_text(json.dumps(m))
     np.save(tmp_path / "eval_dates.npy", np.array(["2000-01-01", "2020-12-31"]))
     np.save(tmp_path / "variables.npy", np.array(["tas"]))
     fails = check_results.check(tmp_path, ["tas"])
     assert any("spectral_fine" in f for f in fails)
     assert any("not 2000-01-01..2100-12-31" in f for f in fails)
+    assert not any("_delta" in f for f in fails)
+
+
+def test_results_check_fires_on_a_late_period_from_another_gcm_end(tmp_path):
+    good = {k: 0.1 for k in check_results.VS_OBS}
+    gcm = {k: 0.9 for k in check_results.VS_GCM}
+    m = {"tas": {"vs_obs": good, "vs_gcm": gcm},
+         "_delta": {"tas": {"2040_2060": 0.1, "2080_2100": 0.2}}}
+    (tmp_path / "metrics.json").write_text(json.dumps(m))
+    fails = check_results.check(tmp_path, ["tas"], gcm_end=2099)
+    assert any("_delta.tas.2080_2099" in f for f in fails)
+    assert any("2080_2100" in f for f in fails)
+    assert not any("_delta" in f for f in check_results.check(tmp_path, ["tas"], gcm_end=2100))
 
 
 def test_psd_white_noise_and_degenerate_crossings():

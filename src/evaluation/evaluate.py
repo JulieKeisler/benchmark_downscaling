@@ -282,7 +282,7 @@ def compute_all_metrics(
     """Return (metrics_vs_obs, metrics_vs_gcm, plot_series) as dicts.
 
     obs / pred_obs  — ERA5 evaluation period (2000-2020): used for all vs-ERA5 metrics.
-    gcm_on_era5 / pred_gcm — full GCM period (2000-2100): used for all vs-GCM metrics
+    gcm_on_era5 / pred_gcm — full GCM period (2000 to --gcm-end): used for all vs-GCM metrics
                              so that temporal correlation, autocorr, and interannual
                              variability are computed over the full climate scenario.
 
@@ -312,7 +312,7 @@ def compute_all_metrics(
     vs_obs["spectral_fine"] = fine_score
     vs_obs["spectral_fine_bias"] = fine_bias
 
-    # All GCM metrics on the full period (pred_gcm / gcm_on_era5 — 2000-2100)
+    # All GCM metrics on the full period (pred_gcm / gcm_on_era5 — 2000 to --gcm-end)
     vs_gcm: dict = {
         "temporal_corr":        mean_temporal_corr(gcm_on_era5, pred_gcm),
         "temporal_corr_annual": mean_temporal_corr_annual(gcm_on_era5, pred_gcm),
@@ -376,8 +376,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start", type=int, default=None)
     parser.add_argument("--end",   type=int, default=None,
                         help="End of ERA5 evaluation period (default from config).")
-    parser.add_argument("--gcm-end", type=int, default=2100,
-                        help="End of full GCM period for delta metrics (default 2100). "
+    parser.add_argument("--gcm-end", type=int, default=2099,
+                        help="Last year scored against the GCM: every vs-GCM metric and the late "
+                             "change window (2080 to --gcm-end). Default 2099. "
                              "Predictions loaded via --pred-dir must cover start–gcm-end.")
     parser.add_argument("--scenario", default=None,
                         help="GCM future experiment (default: config `scenario`, else ssp370). "
@@ -486,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  SKIP ERA5: {e}")
             continue
 
-        # Load GCM for the full period (2000-2100) — used for all vs-GCM metrics
+        # Load GCM for the full period (2000 to --gcm-end) — used for all vs-GCM metrics
         try:
             gcm_full = load_gcm(gcm_dir, variable, start, gcm_end, scenario).astype("float64")
         except FileNotFoundError as e:
@@ -509,7 +510,11 @@ def main(argv: list[str] | None = None) -> int:
             # One variable in float64 at a time (France: 6 x 1.1 GB otherwise); the
             # float32 original is exact, so it is what all_preds_full keeps.
             pred32 = precomputed_preds.pop(variable)
-            pred_full = pred32.astype("float64")   # full period (2000-2100)
+            # Predictions run to 2100, but every score stops at --gcm-end: SerpentFlow-CLIM fits
+            # its last 20-year CDF-t block on the year 2100 alone.
+            n_keep = int((pred32.time.dt.year <= gcm_end).sum())   # dates are monotonic
+            pred32 = pred32.isel(time=slice(0, n_keep))
+            pred_full = pred32.astype("float64")   # full period (2000 to --gcm-end)
             all_preds_full[variable] = pred32
 
             # pred_obs: align predictions to ERA5 period for vs-ERA5 metrics
@@ -622,7 +627,7 @@ def main(argv: list[str] | None = None) -> int:
         if gcm_on_era5 is not None:
             plot_sample_days(obs, pred_obs, gcm_on_era5, variable, method_label,
                              var_plot_dir)
-        # GCM-period plots (correlation, autocorr, annual anomalies — full 2000-2100)
+        # GCM-period plots (correlation, autocorr, annual anomalies — 2000 to --gcm-end)
         plot_temporal_corr(gcm_metrics, pred_gcm, variable, method_label, var_plot_dir)
         if daily:
             plot_autocorr_comparison(gcm_metrics, pred_gcm, variable, method_label, var_plot_dir)
@@ -662,11 +667,11 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── Delta change score (climate signal preservation) ──────────────────────
     # Uses full prediction period (start–gcm_end) vs GCM reference.
-    # hist = start–end (ERA5 overlap), fut1 = 2040-2060, fut2 = 2080-2100.
+    # hist = start–end (ERA5 overlap), fut1 = 2040-2060, fut2 = 2080-gcm_end.
     if all_preds_full and gcm_end > end:
         print(f"\n{'='*60}")
         print(f"  Delta change scores (hist={start}–{end}, "
-              f"fut1=2040–2060, fut2=2080–2100)")
+              f"fut1=2040–2060, fut2=2080–{gcm_end})")
         print(f"{'='*60}")
         delta_all: dict[str, dict] = {}
         _ref_obs = next(iter(all_obs.values()))
@@ -682,7 +687,8 @@ def main(argv: list[str] | None = None) -> int:
                 hist_gcm  = gcm_full_up.sel(time=gcm_full_up.time.dt.year.isin(range(start, end + 1)))
 
                 delta_var: dict[str, float] = {}
-                for label, (fy0, fy1) in [("2040_2060", (2040, 2060)), ("2080_2100", (2080, 2100))]:
+                for label, (fy0, fy1) in [("2040_2060", (2040, 2060)),
+                                          (f"2080_{gcm_end}", (2080, gcm_end))]:
                     fut_pred = pred_full.sel(
                         time=pred_full.time.dt.year.isin(range(fy0, fy1 + 1)))
                     fut_gcm  = gcm_full_up.sel(

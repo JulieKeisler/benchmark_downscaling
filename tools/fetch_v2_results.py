@@ -73,7 +73,9 @@ def main():
         # computed locally (tools/tail_dependence.py, tools/energy_event_factors.py): excluded, so kept
         subprocess.run(["rsync", "-a", "--delete", "--exclude=predictions.pt", "--exclude=checkpoints/",
                         "--exclude=*.pth", "--exclude=plots/tail_dependence*.npz",
-                        "--exclude=plots/energy_event_*", src, str(dst) + "/"], check=True)
+                        "--exclude=plots/energy_event_*",
+                        # maps of the 2100-scored evaluation, kept on the clusters only
+                        "--exclude=plots_to2100/", src, str(dst) + "/"], check=True)
         if not (dst / "metrics.json").exists():
             raise SystemExit(f"{src}: finished job {j['id']} but no metrics.json")
         print(f"  {rel}/{DIRS[meth]} <- {j['host']} job {j['id']}")
