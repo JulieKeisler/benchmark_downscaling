@@ -16,6 +16,8 @@ from metrics import (
     temporal_corr_map, mean_temporal_corr, mean_temporal_corr_annual,
     lag1_autocorr, lag1_autocorr_mae, annual_anomaly_bias,
     intervar_corr_mae, spatial_spectrum_metric,
+    daily_climatology, harmonic_climatology, seasonal_corr, daily_anomalies,
+    lag1_autocorr_anom_mae,
 )
 
 
@@ -132,6 +134,82 @@ class TestScalarMetricsERA5:
 
 
 # ── scalar_metrics_gcm ────────────────────────────────────────────────────────
+
+class TestSeasonalCorr:
+    """seasonal_corr: shape of the harmonic 365-day climatology, offset and amplitude ignored."""
+
+    @staticmethod
+    def _cycle(phase_days=0.0, offset=0.0, amp=10.0, noise=1.0, seed=0):
+        import pandas as pd
+        time = pd.date_range("2000-01-01", "2003-12-31", freq="D")   # 2000 is a leap year
+        doy = time.dayofyear.values
+        rng = np.random.default_rng(seed)
+        base = 280 + offset + amp * np.sin(2 * np.pi * (doy - phase_days) / 365.0)
+        data = base[:, None, None] + noise * rng.standard_normal((len(time), 3, 4))
+        return xr.DataArray(data, coords={"time": time, "lat": [1.0, 2.0, 3.0], "lon": [1.0, 2.0, 3.0, 4.0]},
+                            dims=["time", "lat", "lon"])
+
+    def test_climatology_has_365_days_without_feb29(self):
+        assert daily_climatology(self._cycle()).sizes["doy"] == 365
+
+    def test_smoothing_keeps_a_constant(self):
+        da = self._cycle(amp=0.0) * 0 + 5.0
+        assert np.allclose(daily_climatology(da).values, 5.0)
+
+    def test_harmonic_fit_recovers_a_sinusoid(self):
+        clim = harmonic_climatology(self._cycle(noise=0.0))
+        d = np.arange(1, 366)
+        # the series' day of year runs 1..365 (Feb 29 left out), a sinusoid on 365 days is in the basis
+        expected = 280 + 10 * np.sin(2 * np.pi * d / 365.0)
+        assert np.allclose(clim.isel(lat=0, lon=0).values, expected, atol=0.05)
+
+    def test_perfect(self):
+        obs = self._cycle()
+        assert seasonal_corr(obs, obs.copy()) == pytest.approx(1.0)
+
+    def test_offset_and_amplitude_ignored(self):
+        obs = self._cycle(seed=0)
+        assert seasonal_corr(obs, obs * 1.5 + 3.0) == pytest.approx(1.0)
+
+    def test_half_year_shift_anticorrelates(self):
+        obs, pred = self._cycle(seed=0), self._cycle(phase_days=182.5, seed=1)
+        assert seasonal_corr(obs, pred) < -0.9
+
+
+class TestPersistence:
+    """lag1_autocorr_anom_mae: persistence of daily anomalies, the seasonal cycle removed."""
+
+    @staticmethod
+    def _ar1(phi, amp=0.0, seed=0):
+        import pandas as pd
+        time = pd.date_range("2000-01-01", "2009-12-31", freq="D")
+        rng = np.random.default_rng(seed)
+        e = rng.standard_normal((len(time), 2, 2))
+        x = np.zeros_like(e)
+        for t in range(1, len(time)):
+            x[t] = phi * x[t - 1] + e[t]
+        cycle = amp * np.sin(2 * np.pi * time.dayofyear.values / 365.0)
+        return xr.DataArray(x + cycle[:, None, None], dims=["time", "lat", "lon"],
+                            coords={"time": time, "lat": [1.0, 2.0], "lon": [1.0, 2.0]})
+
+    def test_perfect(self):
+        a = self._ar1(0.5)
+        assert lag1_autocorr_anom_mae(a, a.copy()) == pytest.approx(0.0, abs=1e-12)
+
+    def test_seasonal_cycle_does_not_count(self):
+        # same anomalies, one with a large seasonal cycle: the raw lag-1 differs a lot, this score does not
+        a, b = self._ar1(0.5), self._ar1(0.5, amp=20.0)
+        assert lag1_autocorr_anom_mae(a, b) < 0.02
+        assert float(np.abs(lag1_autocorr(a) - lag1_autocorr(b)).mean()) > 0.3
+
+    def test_detects_a_persistence_error(self):
+        err = lag1_autocorr_anom_mae(self._ar1(0.3, seed=0), self._ar1(0.7, seed=1))
+        assert 0.3 < err < 0.5
+
+    def test_anomalies_have_no_cycle(self):
+        an = daily_anomalies(self._ar1(0.0, amp=20.0))
+        assert abs(float(daily_climatology(an, window=31).std())) < 0.3
+
 
 class TestScalarMetricsGCM:
 

@@ -34,7 +34,7 @@ from data_processing import (
 from baselines import METHOD_REGISTRY  # ROOT (=src/) already on sys.path
 
 from metrics import (
-    spatial_mean_abs_bias, std_error, ks_stat, seasonal_mae,
+    spatial_mean_abs_bias, std_error, ks_stat, seasonal_mae, seasonal_corr, lag1_autocorr_anom_mae,
     extreme_freq_bias, extreme_intensity_bias, clim_rmse,
     mean_temporal_corr, mean_temporal_corr_annual,
     lag1_autocorr_mae, annual_anomaly_bias,
@@ -303,6 +303,9 @@ def compute_all_metrics(
         vs_obs["seasonal_mae"]      = seasonal_mae(obs, pred_obs)
         vs_obs["extreme_freq"]      = extreme_freq_bias(obs, pred_obs, q=0.95)
         vs_obs["extreme_intensity"] = extreme_intensity_bias(obs, pred_obs, q=0.95)
+        vs_obs["seasonal_corr"]     = seasonal_corr(obs, pred_obs)
+        # persistence against ERA5, on anomalies (vs_gcm lag1_autocorr_mae keeps the seasonal cycle)
+        vs_obs["lag1_autocorr_anom_mae"] = lag1_autocorr_anom_mae(obs, pred_obs)
 
     # Spatial spectrum metric (ERA5 period)
     spec_score, spec_data = spatial_spectrum_metric(obs, pred_obs)
