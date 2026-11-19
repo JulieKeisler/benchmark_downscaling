@@ -156,3 +156,38 @@ def test_psd_sweep_main_writes_json(tmp_path, monkeypatch):
     d = json.loads(out.read_text())
     assert d["checkpoint_sha256"] == hashlib.sha256((ck / "best.pt").read_bytes()).hexdigest()
     assert isinstance(d["variables"]["tas"]["degenerate"], bool) and d["t_star"] > 0
+
+
+def _cell_field(var, lat, lon, years, seed):
+    import pandas as pd
+    time = pd.date_range(f"{years[0]}-01-01", f"{years[1]}-12-31", freq="D")
+    rng = np.random.default_rng(seed)
+    shape = (len(time), len(lat), len(lon))
+    if var == "pr":
+        data = rng.gamma(0.5, 6.0, shape)                    # cell-independent, heavy-tailed
+    else:
+        data = 285.0 + 5.0 * rng.standard_normal(shape)
+    return xr.DataArray(data, dims=("time", "lat", "lon"), coords={"time": time, "lat": lat, "lon": lon})
+
+
+@pytest.mark.parametrize("var", ["pr", "tas"])
+@pytest.mark.parametrize("detrend", [True, False])
+def test_bcsd_border_cells_are_not_extrapolated(var, detrend):
+    """BCSD/EQM on the IPSL x France geometry: ERA5 rows and columns beyond the outermost GCM centres must
+    stay within twice the interior's spread around its median (a cubic spline extrapolated there reached
+    3000 mm/day for pr; on this geometry the old code gives 6-23 times the spread, the fixed one about 1)."""
+    sys.path.insert(0, str(ROOT / "src" / "baselines"))
+    from inference_bcsd import bcsd_downscale
+    lat_g, lon_g = 41.830986 + 1.2676 * np.arange(11), np.arange(-5.0, 10.01, 2.5)
+    lat_e, lon_e = np.arange(55.0, 40.99, -0.25), np.arange(-6.0, 10.01, 0.25)
+    gcm_cal = _cell_field(var, lat_g, lon_g, (1980, 1982), 1)
+    gcm = _cell_field(var, lat_g, lon_g, (2000, 2002), 2)
+    obs_cal = _cell_field(var, lat_e, lon_e, (1980, 1982), 3)
+    pred = bcsd_downscale(gcm, obs_cal, var, gcm_calib=gcm_cal, obs_calib=obs_cal, detrend=detrend)
+    inside = ((pred.lat >= lat_g.min()) & (pred.lat <= lat_g.max())
+              & (pred.lon >= lon_g.min()) & (pred.lon <= lon_g.max()))
+    assert np.isfinite(pred.values).all()
+    centre = float(pred.where(inside).median())
+    spread_in = float(np.abs(pred.where(inside) - centre).max())
+    spread_out = float(np.abs(pred.where(~inside) - centre).max())
+    assert spread_out <= 2.0 * spread_in, f"border spread {spread_out:.1f} vs interior {spread_in:.1f}"

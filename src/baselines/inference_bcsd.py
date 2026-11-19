@@ -33,7 +33,7 @@ sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent / "evaluation"))
 
 from data_processing import (
-    DEFAULT_VARIABLES, load_era5, load_gcm, align_time, save_predictions,
+    DEFAULT_VARIABLES, load_era5, load_gcm, align_time, bicubic_regrid, save_predictions,
 )
 from methods import _qmap_1d
 
@@ -170,17 +170,16 @@ def bcsd_downscale(gcm: xr.DataArray, obs: xr.DataArray,
 
     bc = gcm.copy(data=bc_daily)
 
-    # Step 6: Bicubic interpolation to ERA5 grid
-    bc_fine = bc.interp(lat=obs.lat, method="cubic",
-                        kwargs={"fill_value": "extrapolate"})
-    bc_fine = bc_fine.interp(lon=obs.lon, method="cubic",
-                              kwargs={"fill_value": "extrapolate"})
+    # Step 6: Bicubic interpolation to the ERA5 grid, with the kernel the other methods use.
+    # ERA5 cells beyond the outermost GCM centres take edge values: a cubic spline
+    # extrapolated there gave pr q99 up to 3000 mm/day in the border cells.
+    bc_fine = bicubic_regrid(bc, obs.lat.values, obs.lon.values)
     # Step 7: Fine-scale ERA5 spatial detail from ERA5 calib climatology
     obs_clim = obs_cal.groupby("time.month").mean("time")           # [12, lat_fine, lon_fine]
     obs_clim_coarse = obs_coarse.groupby("time.month").mean("time") # [12, lat_gcm, lon_gcm]
-    obs_clim_coarse_fine = obs_clim_coarse.interp(
-        lat=obs.lat, method="cubic", kwargs={"fill_value": "extrapolate"}
-    ).interp(lon=obs.lon, method="cubic", kwargs={"fill_value": "extrapolate"})
+    # Same operator as step 6, so a GCM equal to the coarse ERA5 gets the ERA5 climatology back.
+    obs_clim_coarse_fine = bicubic_regrid(obs_clim_coarse.rename(month="time"),
+                                          obs.lat.values, obs.lon.values)
 
     month_idx = bc_fine.time.dt.month.values - 1
     pred_np = bc_fine.values.copy()
