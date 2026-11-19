@@ -561,14 +561,14 @@ METRIC_DOCS = {
         "name": "SAL structure |S| (pr)",
         "group": "vs ERA5",
         "simple": "Precipitation only. Are the rain areas the right size and shape? Rain objects (connected cells above 1/15 of the day's 95th percentile of wet cells, Wernli et al. 2008) are found every day in ERA5 and in the method; S compares their mean scaled volume V over 2000–2020. |S| is shown: 0 = same, 2 = maximal.",
-        "detailed": "A downscaled day has no ERA5 counterpart, so SAL's quantities are computed for each map on its own and compared as 2000–2020 means: S = (V̄_pred − V̄_ERA5) / (½(V̄_pred + V̄_ERA5)), V = Σ R_n V_n / Σ R_n, V_n = R_n / max_n (R_n = rain summed over object n). Signed S (> 0: objects too large or flat) is in metrics_extra.json.",
+        "detailed": "A downscaled day has no ERA5 counterpart, so SAL's quantities are computed for each map on its own and compared as 2000–2020 means: S = (V̄_pred − V̄_ERA5) / (½(V̄_pred + V̄_ERA5)), V = Σ R_n V_n / Σ R_n, V_n = R_n / max_n (R_n = rain summed over object n). Signed S (> 0: objects too large or flat) is in the run's metrics.json (\"sal\" block) or, for runs evaluated before 19 Nov 2026, in metrics_extra.json.",
         "eq": "",
     },
     "sal_A_abs": {
         "name": "SAL amplitude |A| (pr)",
         "group": "vs ERA5",
         "simple": "Precipitation only. Relative error of the domain-mean rain over 2000–2020, SAL's A component (0 = same, 2 = maximal).",
-        "detailed": "A = (D̄_pred − D̄_ERA5) / (½(D̄_pred + D̄_ERA5)), D the daily domain mean. Signed A (> 0: too much rain) is in metrics_extra.json.",
+        "detailed": "A = (D̄_pred − D̄_ERA5) / (½(D̄_pred + D̄_ERA5)), D the daily domain mean. Signed A (> 0: too much rain) is in the run's metrics.json (\"sal\" block) or, for runs evaluated before 19 Nov 2026, in metrics_extra.json.",
         "eq": "",
     },
     "sal_L": {
@@ -582,7 +582,7 @@ METRIC_DOCS = {
         "name": "SAL KS daily structure (pr)",
         "group": "vs ERA5",
         "simple": "Precipitation only. KS distance between the 2000–2020 distributions of the daily structure parameter V (ERA5 vs method): do the method's days have the same mix of small, peaked and wide, flat rain areas?",
-        "detailed": "V per day as in SAL's S; days without a rain object are left out. KS of the domain-mean rain D, of the object spread r and of the number of objects are also in metrics_extra.json.",
+        "detailed": "V per day as in SAL's S; days without a rain object are left out. KS of the domain-mean rain D, of the object spread r and of the number of objects are also in the run's metrics.json (\"sal\" block) or, for runs evaluated before 19 Nov 2026, in metrics_extra.json.",
         "eq": "",
     },
     "sal_ks_area": {
