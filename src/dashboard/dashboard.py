@@ -2023,7 +2023,8 @@ with tab_table:
         st.dataframe(styled, width="stretch")
         st.caption(
             "One column per method — green = best per row. "
-            "All metrics lower-is-better except temporal corr (higher = better).  \n"
+            "All metrics lower-is-better except the correlations with the GCM (temporal corr, "
+            "temporal corr annual, ACC daily anomalies: higher = better).  \n"
             "**vs-GCM metrics are measured against the bicubic-interpolated GCM**, so "
             "bicubic scores perfectly on them by construction. Daily temporal correlation is "
             "lowered by any method that injects noise or generates detail; prefer *temporal "
