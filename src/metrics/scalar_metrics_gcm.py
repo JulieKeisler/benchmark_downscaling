@@ -3,6 +3,8 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
+from .scalar_metrics_era5 import daily_anomalies
+
 # ------------------------------------------------------------------
 # Scalar metrics: GCM vs pred (input consistency)
 #
@@ -41,6 +43,48 @@ def temporal_corr_annual_map(gcm: xr.DataArray, pred: xr.DataArray) -> xr.DataAr
 def mean_temporal_corr_annual(gcm: xr.DataArray, pred: xr.DataArray) -> float:
     """Spatial mean of annual temporal Pearson correlation."""
     return float(temporal_corr_annual_map(gcm, pred).mean().values)
+
+
+def block_daily_anomalies(da: xr.DataArray, block_years: int | None = 20,
+                          window: int = 31) -> xr.DataArray:
+    """Daily anomalies from a climatology refitted in each block of ``block_years`` years.
+
+    Over 2000-2099 one climatology would leave the forced trend in the anomalies
+    (about 4 K for tas under ssp370), and the correlation would reward keeping
+    the trend, which the change metrics already score. The blocks start at the
+    first year; a last block shorter than half a block joins the previous one.
+    ``block_years=None`` uses one climatology for the whole series.
+    """
+    if block_years is None:
+        return daily_anomalies(da, window)
+    years = da.time.dt.year.values
+    starts = list(range(int(years.min()), int(years.max()) + 1, block_years))
+    if len(starts) > 1 and int(years.max()) + 1 - starts[-1] < block_years / 2:
+        starts.pop()
+    edges = starts + [int(years.max()) + 1]
+    parts = [daily_anomalies(da.isel(time=(years >= a) & (years < b)), window)
+             for a, b in zip(edges[:-1], edges[1:])]
+    return xr.concat(parts, dim="time")
+
+
+def acc_daily_map(gcm: xr.DataArray, pred: xr.DataArray, block_years: int | None = 20,
+                  window: int = 31) -> xr.DataArray:
+    """Anomaly correlation coefficient (ACC) of daily values with the GCM at each grid cell.
+
+    Each series' own daily climatology (``block_daily_anomalies``) is removed
+    before the Pearson correlation over time, so the seasonal cycle, which
+    makes the raw daily correlation close to 1 for any monotone correction,
+    does not count. It tells how much of the GCM's day-to-day weather the
+    method keeps.
+    """
+    return xr.corr(block_daily_anomalies(gcm, block_years, window),
+                   block_daily_anomalies(pred, block_years, window), dim="time")
+
+
+def mean_acc_daily(gcm: xr.DataArray, pred: xr.DataArray, block_years: int | None = 20,
+                   window: int = 31) -> float:
+    """Spatial mean of acc_daily_map (higher = better, bicubic = 1 by construction)."""
+    return float(acc_daily_map(gcm, pred, block_years, window).mean().values)
 
 
 def lag1_autocorr(da: xr.DataArray) -> xr.DataArray:

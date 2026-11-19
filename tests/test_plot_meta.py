@@ -100,8 +100,10 @@ def test_vlabel_unknown_variable_does_not_invent_a_unit():
 # Line/map types whose caption must name the variable's physical unit verbatim.
 # `spectra` is excluded: its axes are wavelength (km) and a normalised PSD (a.u.).
 _PHYSICAL_LINE_TYPES = ("seasonal", "doy", "annual", "cdf")
-_PHYSICAL_MAP_TYPES = ("bias_map", "samples", "delta_2040_2060", "delta_2080_2099")
-_UNITLESS_MAP_TYPES = ("temporal_corr", "autocorr")
+_PHYSICAL_MAP_TYPES = ("bias_map", "samples", "delta_2040_2060", "delta_2080_2099",
+                       "extreme_q99", "extreme_q01")
+_UNITLESS_MAP_TYPES = ("temporal_corr", "autocorr", "acc_daily", "extreme_freq", "sal_freq", "sal_flat")
+_OTHER_UNIT_MAP_TYPES = {"sal_area": "km²"}   # rain-object area, whatever the variable
 
 
 @pytest.mark.parametrize("line_type", _PHYSICAL_LINE_TYPES)
@@ -149,13 +151,15 @@ def test_delta_captions_show_change_and_unit():
 def test_colorbar_labels_carry_units_or_are_marked_unitless():
     # Spatial-map colorbars are the axis of the figure: each must name a unit,
     # and change maps must be prefixed with "Δ".
-    unitless = {"temporal_corr", "autocorr"}
+    unitless = set(_UNITLESS_MAP_TYPES)
     for var in EXPECTED_UNITS:
         for pt in plot_meta.MAP_PLOT_TYPES:
             lbl = plot_meta.colorbar_label(var, pt)
             assert lbl.strip(), f"empty colorbar label {pt}/{var}"
             if pt in unitless:
                 assert "unitless" in lbl, f"{pt} should be marked unitless"
+            elif pt in _OTHER_UNIT_MAP_TYPES:
+                assert _OTHER_UNIT_MAP_TYPES[pt] in lbl, f"{pt} colorbar lacks {_OTHER_UNIT_MAP_TYPES[pt]}"
             else:
                 assert plot_meta.VAR_UNITS[var] in lbl, f"{pt}/{var} colorbar lacks unit"
             if pt.startswith("delta_"):
@@ -176,3 +180,19 @@ def test_helps_raise_on_unknown_type():
         plot_meta.map_help("tas", "nope")
     with pytest.raises(KeyError):
         plot_meta.colorbar_label("tas", "nope")
+
+
+def test_every_map_type_is_classified_by_unit():
+    # A new map type must be put in one of the unit classes above, or its caption goes unchecked.
+    classified = set(_PHYSICAL_MAP_TYPES) | set(_UNITLESS_MAP_TYPES) | set(_OTHER_UNIT_MAP_TYPES)
+    assert set(plot_meta.MAP_PLOT_TYPES) == classified
+
+
+def test_other_unit_map_captions_state_their_unit():
+    for pt, unit in _OTHER_UNIT_MAP_TYPES.items():
+        for var in EXPECTED_UNITS:
+            assert unit in plot_meta.map_help(var, pt), f"{pt} caption lacks {unit}"
+
+
+def test_reference_map_types_are_map_types():
+    assert set(plot_meta.REFERENCE_MAP_TYPES) <= set(plot_meta.MAP_PLOT_TYPES)

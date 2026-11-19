@@ -160,6 +160,30 @@ def extreme_freq_bias(obs: xr.DataArray, pred: xr.DataArray, q: float = 0.95) ->
     return float(np.abs(pred_freq - obs_freq).mean().values)
 
 
+def extreme_maps(obs: xr.DataArray, pred: xr.DataArray, q_high: float = 0.99,
+                 q_low: float | None = 0.01, q_freq: float = 0.95) -> dict[str, np.ndarray]:
+    """Per-cell maps of where the extremes are, for ERA5 and the prediction.
+
+    - ``obs_q99`` / ``pred_q99``: the ``q_high`` quantile of daily values at each cell;
+    - ``obs_q01`` / ``pred_q01``: the ``q_low`` quantile (left out when ``q_low`` is None,
+      e.g. precipitation, whose low quantiles are 0 mm/day everywhere);
+    - ``obs_freq95`` / ``pred_freq95``: fraction of days above the ERA5 ``q_freq``
+      quantile of the whole region, the map that extreme_freq_bias averages.
+    """
+    thr = float(obs.quantile(q_freq))
+    out = {
+        "obs_q99": obs.quantile(q_high, dim="time").values,
+        "pred_q99": pred.quantile(q_high, dim="time").values,
+        "obs_freq95": (obs > thr).mean("time").values,
+        "pred_freq95": (pred > thr).mean("time").values,
+        "freq_threshold": np.float64(thr),
+    }
+    if q_low is not None:
+        out["obs_q01"] = obs.quantile(q_low, dim="time").values
+        out["pred_q01"] = pred.quantile(q_low, dim="time").values
+    return out
+
+
 def extreme_intensity_bias(obs: xr.DataArray, pred: xr.DataArray, q: float = 0.95) -> float:
     """Spatial mean of |bias| in mean intensity above obs q-quantile.
 

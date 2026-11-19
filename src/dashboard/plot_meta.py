@@ -39,11 +39,20 @@ LINE_PLOT_TYPES = ("seasonal", "doy", "annual", "cdf", "spectra")
 MAP_PLOT_TYPES = (
     "bias_map",
     "temporal_corr",
+    "acc_daily",
     "autocorr",
     "samples",
     "delta_2040_2060",
     "delta_2080_2099",
+    "extreme_q99",
+    "extreme_q01",
+    "extreme_freq",
+    "sal_freq",
+    "sal_area",
+    "sal_flat",
 )
+# Map types shown next to an ERA5 reference panel (fields, or the difference to ERA5).
+REFERENCE_MAP_TYPES = ("extreme_q99", "extreme_q01", "extreme_freq", "sal_freq", "sal_area", "sal_flat")
 
 
 def vlabel(var: str) -> str:
@@ -127,6 +136,51 @@ def map_help(var: str, plot_type: str) -> str:
             "state. Units: correlation coefficient (unitless, −1 to +1; "
             "1 = perfect)."
         ),
+        "acc_daily": (
+            "Anomaly correlation (ACC) of daily values with the bicubic GCM at "
+            "every grid cell, 2000–2099: each series' own daily climatology, "
+            "refitted every 20 years, is removed first, so neither the seasonal "
+            "cycle nor the forced trend counts. It shows how much of the GCM's "
+            "day-to-day weather the method keeps. Units: correlation "
+            "coefficient (unitless, 1 = same anomalies as the GCM)."
+        ),
+        "extreme_q99": (
+            "99th percentile of daily values at every grid cell, 2000–2020: "
+            "where the high extremes are. Leftmost panel is ERA5; switch to "
+            "'difference to ERA5' to see method − ERA5 on a shared scale. "
+            f"Units: {vlabel(var)}."
+        ),
+        "extreme_q01": (
+            "1st percentile of daily values at every grid cell, 2000–2020: "
+            "where the low extremes are (cold days, calm winds, low pressure, "
+            "dark days). Not drawn for precipitation, whose low percentiles "
+            "are 0 everywhere. Leftmost panel is ERA5. "
+            f"Units: {vlabel(var)}."
+        ),
+        "extreme_freq": (
+            "Fraction of days above the ERA5 95th percentile of the whole "
+            "region (one threshold for all cells), 2000–2020: where the "
+            "region's extreme days fall. The extreme-frequency score is the "
+            "mean of |method − ERA5| over this map. Units: fraction of days "
+            "(unitless, 0–1)."
+        ),
+        "sal_freq": (
+            "Precipitation only. Fraction of days, 2000–2020, on which the cell "
+            "lies inside a rain object (connected cells above 1/15 of the day's "
+            "95th percentile of wet cells, Wernli et al. 2008): where it rains "
+            "as part of an organised area. Units: fraction of days (unitless, 0–1)."
+        ),
+        "sal_area": (
+            "Precipitation only. Median area of the rain objects covering the "
+            "cell, over the days it is inside one, 2000–2020: whether rain "
+            "areas have the right size where they occur. Units: km²."
+        ),
+        "sal_flat": (
+            "Precipitation only. Median flatness (mean / maximum rain inside "
+            "the object) of the rain objects covering the cell, 2000–2020: "
+            "close to 1 for uniform rain areas, small for peaked cells. "
+            "Units: ratio (unitless, 0–1)."
+        ),
         "autocorr": (
             "Lag-1 autocorrelation difference (pred − GCM): how the method "
             "alters the GCM's day-to-day persistence. Positive = smoother/more "
@@ -165,6 +219,13 @@ def colorbar_label(var: str, plot_type: str) -> str:
         "bias_map":        vlabel(var),
         "temporal_corr":   "Temporal correlation r (unitless)",
         "autocorr":        "Δ lag-1 autocorr (unitless)",
+        "acc_daily":       "ACC of daily anomalies (unitless)",
+        "extreme_q99":     f"q99 {vlabel(var)}",
+        "extreme_q01":     f"q01 {vlabel(var)}",
+        "extreme_freq":    "Fraction of days > regional q95 (unitless)",
+        "sal_freq":        "Fraction of days in a rain object (unitless)",
+        "sal_area":        "Median rain-object area (km²)",
+        "sal_flat":        "Median rain-object flatness (unitless)",
         "samples":         vlabel(var),
         "delta_2040_2060": f"Δ {vlabel(var)}",
         "delta_2080_2099": f"Δ {vlabel(var)}",

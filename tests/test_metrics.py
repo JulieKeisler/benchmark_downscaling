@@ -362,3 +362,160 @@ class TestFineSpectrum:
         from metrics import fine_spectrum_metric
         score, bias, _ = fine_spectrum_metric(self._field(), self._field(smooth=True))
         assert bias < -0.5 and score == -bias
+
+
+class TestAccDaily:
+    """acc_daily_map: correlation of daily anomalies with the GCM, cycle and trend left out."""
+
+    @staticmethod
+    def _series(years=(2000, 2039), trend_per_year=0.0, noise_seed=0, amp=10.0):
+        import pandas as pd
+        time = pd.date_range(f"{years[0]}-01-01", f"{years[1]}-12-31", freq="D")
+        doy = time.dayofyear.values
+        t_years = (time.year.values - years[0]) + doy / 365.0
+        base = 280 + amp * np.sin(2 * np.pi * doy / 365.0) + trend_per_year * t_years
+        rng = np.random.default_rng(noise_seed)
+        data = base[:, None, None] + rng.standard_normal((len(time), 2, 2))
+        return xr.DataArray(data, coords={"time": time, "lat": [1.0, 2.0], "lon": [1.0, 2.0]},
+                            dims=["time", "lat", "lon"])
+
+    def test_identical_is_one(self):
+        from metrics import acc_daily_map
+        g = self._series()
+        assert np.allclose(acc_daily_map(g, g.copy()).values, 1.0)
+
+    def test_shared_cycle_not_counted(self):
+        from metrics import mean_acc_daily, mean_temporal_corr
+        g, p = self._series(noise_seed=0), self._series(noise_seed=1)
+        assert mean_temporal_corr(g, p) > 0.9          # the raw daily correlation is the cycle
+        assert abs(mean_acc_daily(g, p)) < 0.05
+
+    def test_shared_trend_mostly_removed_by_blocks(self):
+        # A shared ramp of total size T adds T^2/12 of common variance; blocks cut T per block.
+        from metrics import mean_acc_daily
+        g = self._series(trend_per_year=0.2, noise_seed=0)
+        p = self._series(trend_per_year=0.2, noise_seed=1)
+        full = mean_acc_daily(g, p, block_years=None)        # 8 K ramp vs unit noise: ~0.84
+        assert full == pytest.approx(64 / 12 / (64 / 12 + 1), abs=0.05)
+        assert mean_acc_daily(g, p, block_years=20) == pytest.approx(16 / 12 / (16 / 12 + 1), abs=0.05)
+        assert abs(mean_acc_daily(g, p, block_years=5)) < 0.15
+
+    def test_short_last_block_joins_previous(self):
+        from metrics import block_daily_anomalies, daily_anomalies
+        g = self._series(years=(2000, 2020), noise_seed=3)    # 2020 alone would be a 1-year block
+        assert np.allclose(block_daily_anomalies(g, 20).values, daily_anomalies(g).values)
+
+
+class TestExtremeMaps:
+    """extreme_maps: per-cell tails and the map extreme_freq_bias averages."""
+
+    def test_shift_moves_quantiles(self, biased):
+        from metrics import extreme_maps
+        obs, pred = biased
+        m = extreme_maps(obs.astype("float64"), (obs + 1.0).astype("float64"))
+        assert np.allclose(m["pred_q99"] - m["obs_q99"], 1.0)
+        assert np.allclose(m["pred_q01"] - m["obs_q01"], 1.0)
+
+    def test_no_low_tail_when_asked(self, perfect):
+        from metrics import extreme_maps
+        obs, pred = perfect
+        assert "obs_q01" not in extreme_maps(obs, pred, q_low=None)
+
+    def test_frequency_map_is_what_extreme_freq_averages(self, biased):
+        from metrics import extreme_maps
+        obs, pred = biased
+        m = extreme_maps(obs, pred)
+        assert np.mean(np.abs(m["pred_freq95"] - m["obs_freq95"])) == pytest.approx(
+            extreme_freq_bias(obs, pred))
+
+
+class TestSAL:
+    """Object-based SAL quantities on hand-built rain fields."""
+
+    LAT = np.arange(50.0, 44.75, -0.25)   # 21 cells, north to south like ERA5
+    LON = np.arange(0.0, 6.25, 0.25)      # 25 cells
+
+    def _series(self, fields):
+        import pandas as pd
+        time = pd.date_range("2000-01-01", periods=len(fields), freq="D")
+        return xr.DataArray(np.stack(fields).astype("float64"),
+                            coords={"time": time, "lat": self.LAT, "lon": self.LON},
+                            dims=["time", "lat", "lon"])
+
+    def _blank(self):
+        return np.zeros((self.LAT.size, self.LON.size))
+
+    def test_objects_split_and_diagonal_join(self):
+        from metrics import find_objects
+        f = self._blank()
+        f[2:4, 2:4] = 10.0
+        f[10:12, 15:17] = 10.0
+        assert find_objects(f)[1] == 2
+        f[4, 4] = 10.0                         # touches the first block diagonally only
+        assert find_objects(f)[1] == 2
+        g = self._blank()
+        g[5, 5] = g[6, 6] = 10.0
+        assert find_objects(g)[1] == 1
+
+    def test_flat_and_peaked_objects(self):
+        from metrics import sal_daily
+        flat = self._blank()
+        flat[5:8, 5:8] = 4.0                   # 9 cells, flat: V = 9, flatness 1
+        peaked = self._blank()
+        peaked[5:8, 5:8] = 1.0
+        peaked[6, 6] = 10.0                    # V = (8 + 10) / 10 = 1.8, flatness 0.2
+        q = sal_daily(self._series([flat, peaked]))
+        assert q["V"][0] == pytest.approx(9.0) and q["V"][1] == pytest.approx(1.8)
+        assert q["obj_flat"] == pytest.approx([1.0, 0.2])
+        assert np.nanmax(q["cell_flat"][1]) == pytest.approx(0.2)
+        assert q["n_obj"].tolist() == [1, 1]
+
+    def test_identical_series_score_zero(self):
+        from metrics import grid_geometry, sal_cell_maps, sal_daily, sal_distribution_scores
+        rng = np.random.default_rng(0)
+        fields = [np.where(rng.random(self._blank().shape) > 0.7, rng.gamma(2, 3, self._blank().shape), 0.0)
+                  for _ in range(40)]
+        q = sal_daily(self._series(fields))
+        d = grid_geometry(self.LAT, self.LON)[3]
+        s = sal_distribution_scores(q, q, d)
+        assert s["sal_S"] == 0 and s["sal_A"] == 0 and s["sal_L"] == 0 and s["sal_ks_area"] == 0
+        _, cell = sal_cell_maps(q, q)
+        assert cell["sal_cell_freq"] == 0 and cell["sal_cell_ks_area"] == 0
+
+    def test_spread_rain_has_positive_structure(self):
+        from metrics import grid_geometry, sal_daily, sal_distribution_scores
+        small, wide = [], []
+        for k in range(10):
+            a, b = self._blank(), self._blank()
+            a[8:10, 8 + k % 3:10 + k % 3] = 9.0      # 4 cells x 9 mm
+            b[6:12, 6 + k % 3:12 + k % 3] = 1.0      # 36 cells x 1 mm: same total, wider and flatter
+            small.append(a)
+            wide.append(b)
+        qo, qp = sal_daily(self._series(small)), sal_daily(self._series(wide))
+        s = sal_distribution_scores(qo, qp, grid_geometry(self.LAT, self.LON)[3])
+        assert s["sal_S"] > 1.0
+        assert abs(s["sal_A"]) < 1e-12
+        assert s["sal_L"] < 0.02
+
+    def test_shifted_rain_has_location_error_only(self):
+        from metrics import grid_geometry, sal_daily, sal_distribution_scores
+        obs, pred = [], []
+        for k in range(10):
+            a = self._blank()
+            a[8:11, 4:7] = 5.0 + k
+            obs.append(a)
+            pred.append(np.roll(a, 12, axis=1))       # 12 cells (3 degrees) east, away from the edge
+        qo, qp = sal_daily(self._series(obs)), sal_daily(self._series(pred))
+        x, y, _, d = grid_geometry(self.LAT, self.LON)
+        s = sal_distribution_scores(qo, qp, d)
+        assert abs(s["sal_S"]) < 0.02 and abs(s["sal_A"]) < 1e-12
+        assert s["sal_L1"] == pytest.approx(abs(x[9, 17] - x[9, 5]) / d, rel=0.02)
+
+
+def test_sal_ks_equals_scipy_statistic():
+    from scipy.stats import ks_2samp
+    from metrics.object_metrics import _ks
+    rng = np.random.default_rng(0)
+    a, b = rng.gamma(2, 3, 500), np.round(rng.gamma(2.2, 3, 700))   # ties included
+    b[:20] = np.nan
+    assert _ks(a, b) == pytest.approx(ks_2samp(a, b[np.isfinite(b)]).statistic, abs=1e-12)

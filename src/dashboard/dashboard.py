@@ -130,7 +130,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # MAP_PLOT_TYPES so a new type must be declared (and captioned) here.
 from plot_meta import (  # noqa: E402
     VAR_UNITS, vlabel, line_help, map_help, colorbar_label,
-    LINE_PLOT_TYPES, MAP_PLOT_TYPES,
+    LINE_PLOT_TYPES, MAP_PLOT_TYPES, REFERENCE_MAP_TYPES,
 )
 import search_index  # noqa: E402  (sidebar full-text search)
 try:
@@ -281,10 +281,30 @@ def _add_backfilled_metrics(metrics: dict, run_dir: Path) -> None:
             vs_obs = metrics[var].setdefault("vs_obs", {})
             for key in ("seasonal_corr", "lag1_autocorr_anom_mae"):
                 vs_obs.setdefault(key, vals[key])
+    # Daily ACC vs the GCM, and the precipitation SAL scores: evaluate.py writes SAL in its own
+    # "sal" block; runs evaluated before carry both in metrics_extra.json
+    # (tools/backfill_extra_metrics.py). The dashboard shows SAL with the vs-ERA5 metrics.
+    for var, entry in metrics.items():
+        if not var.startswith("_"):
+            for key, val in entry.get("sal", {}).items():
+                entry.setdefault("vs_obs", {}).setdefault(key, val)
+    extra = run_dir / "metrics_extra.json"
+    if extra.exists():
+        for var, vals in json.loads(extra.read_text()).items():
+            if var.startswith("_") or var not in metrics:
+                continue
+            metrics[var].setdefault("vs_gcm", {}).setdefault("acc_daily", vals["acc_daily"])
+            for key, val in vals.items():
+                if key.startswith("sal_"):
+                    metrics[var].setdefault("vs_obs", {}).setdefault(key, val)
     # Shown as an error, like the other vs-ERA5 metrics: lower is better.
     for var, entry in metrics.items():
         if not var.startswith("_") and "seasonal_corr" in entry.get("vs_obs", {}):
             entry["vs_obs"]["seasonal_shape"] = 1.0 - entry["vs_obs"]["seasonal_corr"]
+        # S and A are signed (> 0: objects too large or flat, too much rain); ranked by size.
+        for key in ("sal_S", "sal_A"):
+            if not var.startswith("_") and key in entry.get("vs_obs", {}):
+                entry["vs_obs"][f"{key}_abs"] = abs(entry["vs_obs"][key])
 
 
 raw_metrics: dict[str, dict] = {}
@@ -530,6 +550,69 @@ METRIC_DOCS = {
         "detailed": "Monotone per-cell corrections keep it close to 1; methods that inject noise or generate fine-scale detail lower it. A low value is not by itself an error, since the GCM's individual days are not the target — prefer temporal corr annual for signal preservation.",
         "eq": "",
     },
+    "acc_daily": {
+        "name": "ACC daily anomalies",
+        "group": "vs GCM",
+        "simple": "Anomaly correlation of daily values with the bicubic-interpolated GCM over 2000–2099: how much of the GCM's day-to-day weather the method keeps. Higher is better; bicubic scores 1 by construction.",
+        "detailed": "Per grid cell, each series' own daily climatology (31-day smoothing) is removed, refitted in each 20-year block (2000–2019, …, 2080–2099) so the forced trend does not count; then the Pearson correlation of the daily anomalies with the GCM's; mean over the map. Unlike the raw daily correlation, the seasonal cycle does not count, so a monotone per-cell correction no longer scores close to 1 for free.",
+        "eq": r"\overline{r\!\left(pred'_s,\ GCM'_s\right)}",
+    },
+    "sal_S_abs": {
+        "name": "SAL structure |S| (pr)",
+        "group": "vs ERA5",
+        "simple": "Precipitation only. Are the rain areas the right size and shape? Rain objects (connected cells above 1/15 of the day's 95th percentile of wet cells, Wernli et al. 2008) are found every day in ERA5 and in the method; S compares their mean scaled volume V over 2000–2020. |S| is shown: 0 = same, 2 = maximal.",
+        "detailed": "A downscaled day has no ERA5 counterpart, so SAL's quantities are computed for each map on its own and compared as 2000–2020 means: S = (V̄_pred − V̄_ERA5) / (½(V̄_pred + V̄_ERA5)), V = Σ R_n V_n / Σ R_n, V_n = R_n / max_n (R_n = rain summed over object n). Signed S (> 0: objects too large or flat) is in metrics_extra.json.",
+        "eq": "",
+    },
+    "sal_A_abs": {
+        "name": "SAL amplitude |A| (pr)",
+        "group": "vs ERA5",
+        "simple": "Precipitation only. Relative error of the domain-mean rain over 2000–2020, SAL's A component (0 = same, 2 = maximal).",
+        "detailed": "A = (D̄_pred − D̄_ERA5) / (½(D̄_pred + D̄_ERA5)), D the daily domain mean. Signed A (> 0: too much rain) is in metrics_extra.json.",
+        "eq": "",
+    },
+    "sal_L": {
+        "name": "SAL location L (pr)",
+        "group": "vs ERA5",
+        "simple": "Precipitation only. Is the rain in the right place? Distance between the centres of mass of the 2000–2020 rain, plus the difference in how scattered the rain objects are around it, relative to the domain size (0 to 2).",
+        "detailed": "L = |x_pred − x_ERA5| / d + 2 |r̄_pred − r̄_ERA5| / d, with x the centre of mass of the period's total rain, r the rain-weighted mean distance of the day's objects from the day's centre of mass, d the largest distance across the domain.",
+        "eq": "",
+    },
+    "sal_ks_V": {
+        "name": "SAL KS daily structure (pr)",
+        "group": "vs ERA5",
+        "simple": "Precipitation only. KS distance between the 2000–2020 distributions of the daily structure parameter V (ERA5 vs method): do the method's days have the same mix of small, peaked and wide, flat rain areas?",
+        "detailed": "V per day as in SAL's S; days without a rain object are left out. KS of the domain-mean rain D, of the object spread r and of the number of objects are also in metrics_extra.json.",
+        "eq": "",
+    },
+    "sal_ks_area": {
+        "name": "SAL KS object areas (pr)",
+        "group": "vs ERA5",
+        "simple": "Precipitation only. KS distance between the areas (km²) of all rain objects found over 2000–2020 in ERA5 and in the method.",
+        "detailed": "Objects pooled over days; cell areas from a sinusoidal projection (cos latitude).",
+        "eq": "",
+    },
+    "sal_cell_freq": {
+        "name": "SAL per-cell object frequency (pr)",
+        "group": "vs ERA5",
+        "simple": "Precipitation only. Per grid cell, the fraction of days the cell is inside a rain object, ERA5 vs method; mean absolute difference over the map. Says where organised rain falls (map: Spatial maps → rain objects).",
+        "detailed": "Same objects as SAL's S; 2000–2020.",
+        "eq": "",
+    },
+    "sal_cell_ks_area": {
+        "name": "SAL per-cell KS object area (pr)",
+        "group": "vs ERA5",
+        "simple": "Precipitation only. Per grid cell, KS distance between the 2000–2020 distributions of the area of the rain objects covering it, ERA5 vs method; mean over the map. Says where rain areas have the wrong size.",
+        "detailed": "Every day, each cell inside an object takes that object's area (km²); days outside objects are left out.",
+        "eq": "",
+    },
+    "sal_cell_ks_flat": {
+        "name": "SAL per-cell KS object flatness (pr)",
+        "group": "vs ERA5",
+        "simple": "Precipitation only. Per grid cell, KS distance between the 2000–2020 distributions of the flatness (mean / max rain) of the rain objects covering it, ERA5 vs method; mean over the map.",
+        "detailed": "Flatness = V_n / number of cells of the object = mean / max rain inside it (1 = uniform).",
+        "eq": "",
+    },
     "annual_anomaly_bias": {
         "name": "Annual anomaly bias",
         "group": "vs GCM",
@@ -771,6 +854,15 @@ METRIC_IMPL = {
     "spectral_fine":        "src/metrics/spatial_spectrum_metrics.py — fine_spectrum_metric",
     "temporal_corr_annual": "src/metrics/scalar_metrics_gcm.py — mean_temporal_corr_annual",
     "temporal_corr":        "src/metrics/scalar_metrics_gcm.py — mean_temporal_corr",
+    "acc_daily":            "src/metrics/scalar_metrics_gcm.py — acc_daily_map",
+    "sal_S_abs":            "src/metrics/object_metrics.py — sal_distribution_scores",
+    "sal_A_abs":            "src/metrics/object_metrics.py — sal_distribution_scores",
+    "sal_L":                "src/metrics/object_metrics.py — sal_distribution_scores",
+    "sal_ks_V":             "src/metrics/object_metrics.py — sal_distribution_scores",
+    "sal_ks_area":          "src/metrics/object_metrics.py — sal_distribution_scores",
+    "sal_cell_freq":        "src/metrics/object_metrics.py — sal_cell_maps",
+    "sal_cell_ks_area":     "src/metrics/object_metrics.py — sal_cell_maps",
+    "sal_cell_ks_flat":     "src/metrics/object_metrics.py — sal_cell_maps",
     "annual_anomaly_bias":  "src/metrics/scalar_metrics_gcm.py — annual_anomaly_bias",
     "lag1_autocorr_mae":    "src/metrics/scalar_metrics_gcm.py — lag1_autocorr_mae",
     "Δ signal 2040–2060":   "src/metrics/scalar_metrics_gcm.py — delta_change_score (2040_2060)",
@@ -1016,8 +1108,13 @@ OBS_METRICS = [
     "seasonal_mae", "seasonal_shape", "extreme_freq", "extreme_intensity",
     "spectral_mae", "spectral_fine",
 ]
+# Precipitation only: in the table, not on the radar (one variable would set the axis).
+SAL_METRICS = [
+    "sal_S_abs", "sal_A_abs", "sal_L", "sal_ks_V", "sal_ks_area",
+    "sal_cell_freq", "sal_cell_ks_area", "sal_cell_ks_flat",
+]
 GCM_METRICS = [
-    "temporal_corr_annual", "temporal_corr",
+    "temporal_corr_annual", "acc_daily", "temporal_corr",
     "annual_anomaly_bias", "lag1_autocorr_mae",
     "Δ signal 2040–2060", "Δ signal 2080–2099",
 ]
@@ -1043,12 +1140,21 @@ METRIC_LABELS = {
     "intervar_corr":        "Inter-var corr MAE (vs ERA5)",
     "temporal_corr_annual": "Temporal corr annual (vs GCM)",
     "temporal_corr":        "Temporal corr daily (vs GCM)",
+    "acc_daily":            "ACC daily anomalies (vs GCM)",
+    "sal_S_abs":            "SAL |S| structure (pr, vs ERA5)",
+    "sal_A_abs":            "SAL |A| amplitude (pr, vs ERA5)",
+    "sal_L":                "SAL L location (pr, vs ERA5)",
+    "sal_ks_V":             "SAL KS daily structure V (pr)",
+    "sal_ks_area":          "SAL KS object areas (pr)",
+    "sal_cell_freq":        "SAL per-cell object frequency (pr)",
+    "sal_cell_ks_area":     "SAL per-cell KS object area (pr)",
+    "sal_cell_ks_flat":     "SAL per-cell KS object flatness (pr)",
     "annual_anomaly_bias":  "Annual anomaly bias (vs GCM)",
     "lag1_autocorr_mae":    "Lag-1 autocorr MAE (vs GCM)",
     "Δ signal 2040–2060":   "Δ signal 2040–2060 (vs GCM)",
     "Δ signal 2080–2099":   "Δ signal 2080–2099 (vs GCM)",
 }
-HIGHER_BETTER = {"temporal_corr_annual", "temporal_corr"}
+HIGHER_BETTER = {"temporal_corr_annual", "temporal_corr", "acc_daily"}
 
 # VAR_UNITS / vlabel / per-plot captions live in the sibling plot_meta module
 # (imported above) so they are unit-testable without a Streamlit runtime.
@@ -1855,7 +1961,7 @@ with tab_table:
     col_l, col_r = st.columns([3, 1])
     with col_l:
         show_obs = st.multiselect(
-            "vs ERA5 metrics", OBS_METRICS,
+            "vs ERA5 metrics", OBS_METRICS + SAL_METRICS,
             default=["bias_mae", "std_error", "ks_full", "seasonal_mae", "spectral_mae"],
             format_func=lambda k: METRIC_LABELS.get(k, k),
         )
@@ -1874,6 +1980,8 @@ with tab_table:
             row = {"Variable": var, "Metric": METRIC_LABELS.get(k, k)}
             for m in sel_methods:
                 row[mlabel(m)] = raw_metrics[m].get(var, {}).get("vs_obs", {}).get(k, float("nan"))
+            if k in SAL_METRICS and not any(np.isfinite(row[mlabel(m)]) for m in sel_methods):
+                continue   # SAL exists for precipitation only
             rows.append(row)
             key_list.append(k)
         for k in show_gcm:
@@ -2393,20 +2501,33 @@ with tab_maps:
             list(MAP_PLOT_TYPES),
             format_func=lambda x: {
                 "bias_map": "Bias map",
-                "temporal_corr": "Temporal correlation",
+                "temporal_corr": "Temporal correlation (annual)",
+                "acc_daily": "Anomaly correlation (daily)",
                 "autocorr": "Autocorrelation",
                 "samples": "Sample days",
                 "delta_2040_2060": "Δ climate signal 2040–2060",
                 "delta_2080_2099": "Δ climate signal 2080–2099",
+                "extreme_q99": "Extremes: 99th percentile",
+                "extreme_q01": "Extremes: 1st percentile",
+                "extreme_freq": "Extremes: days above regional q95",
+                "sal_freq": "Rain objects: frequency (pr)",
+                "sal_area": "Rain objects: area (pr)",
+                "sal_flat": "Rain objects: flatness (pr)",
             }.get(x, x),
             key="map_type",
         )
     with col2:
         sel_var_map = st.selectbox("Variable", all_vars, key="mv")
+    _ref_diff = False
+    if plot_type in REFERENCE_MAP_TYPES:
+        _ref_diff = st.radio("Show", ["Fields (ERA5 first)", "Difference to ERA5"],
+                             horizontal=True, key="map_ref_mode") == "Difference to ERA5"
 
     # Caption and colorbar label (unit-aware) come from plot_meta — unit-tested.
     st.caption(map_help(sel_var_map, plot_type))
     _cb_label = colorbar_label(sel_var_map, plot_type)
+    if _ref_diff:
+        _cb_label = f"method − ERA5: {_cb_label}"
 
     # ── Shared-colorbar spatial maps ───────────────────────────────────────
     # Render each map from the per-method npz data with one color scale shared
@@ -2421,13 +2542,30 @@ with tab_maps:
             "samples":         f"samples_data_{variable}.npz",
             "delta_2040_2060": f"delta_data_{variable}_2040_2060.npz",
             "delta_2080_2099": f"delta_data_{variable}_2080_2099.npz",
+            "acc_daily":       f"acc_daily_data_{variable}.npz",
+            "extreme_q99":     f"extremes_data_{variable}.npz",
+            "extreme_q01":     f"extremes_data_{variable}.npz",
+            "extreme_freq":    f"extremes_data_{variable}.npz",
+            "sal_freq":        f"sal_data_{variable}.npz",
+            "sal_area":        f"sal_data_{variable}.npz",
+            "sal_flat":        f"sal_data_{variable}.npz",
         }
         field_map = {
             "bias_map":        "mean_bias",
             "temporal_corr":   "corr",
+            "acc_daily":       "corr",
             "autocorr":        ("ac_pred", "ac_gcm"),  # bias = ac_pred − ac_gcm
             "delta_2040_2060": "pred_delta",
             "delta_2080_2099": "pred_delta",
+        }
+        # Reference types: (method field, ERA5 field) in the same npz
+        ref_map = {
+            "extreme_q99":  ("pred_q99", "obs_q99"),
+            "extreme_q01":  ("pred_q01", "obs_q01"),
+            "extreme_freq": ("pred_freq95", "obs_freq95"),
+            "sal_freq":     ("pred_freq", "obs_freq"),
+            "sal_area":     ("pred_area", "obs_area"),
+            "sal_flat":     ("pred_flat", "obs_flat"),
         }
         f = m_dir / npz_map[ptype]
         if not f.exists():
@@ -2441,6 +2579,9 @@ with tab_maps:
                     "lat":   d["lat"], "lon":  d["lon"],
                     "gcm_delta": None,
                 }
+            if ptype in ref_map:
+                pk, ok = ref_map[ptype]
+                return {"arr": d[pk], "ref": d[ok], "lat": d["lat"], "lon": d["lon"], "gcm": None}
             spec = field_map[ptype]
             if isinstance(spec, tuple):
                 arr = d[spec[0]] - d[spec[1]]   # bias toward GCM
@@ -2532,10 +2673,23 @@ with tab_maps:
             if ref["gcm"] is not None:
                 maps_data = {"GCM": {"arr": ref["gcm"], "lat": ref["lat"],
                                      "lon": ref["lon"]}, **maps_data}
+        if plot_type in REFERENCE_MAP_TYPES:
+            ref = next(iter(maps_data.values()))
+            if _ref_diff:
+                maps_data = {m: {**d, "arr": d["arr"] - d["ref"]} for m, d in maps_data.items()}
+            else:   # ERA5 first, same scale as the methods
+                maps_data = {"ERA5": {"arr": ref["ref"], "lat": ref["lat"], "lon": ref["lon"]},
+                             **maps_data}
         stacked = [d["arr"] for d in maps_data.values()]
         all_arr = np.stack(stacked)
         finite  = all_arr[np.isfinite(all_arr)]
-        if plot_type in ("bias_map", "autocorr", "delta_2040_2060", "delta_2080_2099"):
+        if plot_type in REFERENCE_MAP_TYPES and not _ref_diff:
+            lo = float(np.percentile(finite, 1)) if finite.size else 0.0
+            hi = float(np.percentile(finite, 99)) if finite.size else 1.0
+            if hi - lo < 1e-12:
+                hi = lo + 1.0
+            zmin, zmax, cmap, zmid = lo, hi, "viridis", None
+        elif _ref_diff or plot_type in ("bias_map", "autocorr", "delta_2040_2060", "delta_2080_2099"):
             vmax    = float(np.nanpercentile(np.abs(finite), 98)) if finite.size else 1.0
             vmax    = max(vmax, 1e-9)
             zmin, zmax, cmap, zmid = -vmax, vmax, "RdBu_r", 0.0

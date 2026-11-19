@@ -351,3 +351,84 @@ def plot_sample_days(
         lat=obs.lat.values, lon=obs.lon.values,
     )
     print(f"  saved samples_data_{variable}.npz ({', '.join(dates)})")
+
+
+def _reference_rows_png(rows, lat, lon, title: str, out: Path) -> None:
+    """One row per quantity: ERA5 | method | method − ERA5, one colour scale per row."""
+    import matplotlib.pyplot as plt
+    ccrs, cfeature = _try_cartopy()
+    proj = ccrs.PlateCarree() if ccrs is not None else None
+    fig, axes = plt.subplots(len(rows), 3, figsize=(15, 4.2 * len(rows)),
+                             subplot_kw={"projection": proj} if proj else {},
+                             squeeze=False, layout="constrained")
+    tr = {"transform": ccrs.PlateCarree()} if ccrs is not None else {}
+    for r, (label, ref, pred, method) in enumerate(rows):
+        both = np.concatenate([ref.ravel(), pred.ravel()])
+        both = both[np.isfinite(both)]
+        lo, hi = (float(np.percentile(both, 1)), float(np.percentile(both, 99))) if both.size else (0.0, 1.0)
+        diff = pred - ref
+        vm = max(float(np.nanpercentile(np.abs(diff), 98)) if np.isfinite(diff).any() else 0.0, 1e-9)
+        for c, (data, name, cmap, vmin, vmax) in enumerate([
+            (ref, f"ERA5 {label}", "viridis", lo, hi),
+            (pred, f"{method} {label}", "viridis", lo, hi),
+            (diff, f"{method} − ERA5", "RdBu_r", -vm, vm),
+        ]):
+            ax = axes[r, c]
+            im = ax.pcolormesh(lon, lat, data, cmap=cmap, vmin=vmin, vmax=vmax, **tr)
+            _add_geo(ax, lon, lat, ccrs, cfeature)
+            ax.set_title(name, fontsize=9)
+            plt.colorbar(im, ax=ax, shrink=0.8)
+    fig.suptitle(title, fontsize=11, fontweight="bold")
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  saved {out.name}")
+
+
+def plot_extreme_maps(maps: dict, lat: np.ndarray, lon: np.ndarray, variable: str,
+                      method: str, plot_dir: Path, save_png: bool = True) -> None:
+    """Where the extremes are, ERA5 vs method: per-cell q99, q01 (not for pr) and
+    frequency above the regional ERA5 q95. Saves ``extremes_data_{variable}.npz``
+    (the dict of ``metrics.extreme_maps`` plus lat/lon) and a PNG."""
+    np.savez_compressed(plot_dir / f"extremes_data_{variable}.npz", **maps, lat=lat, lon=lon)
+    if not save_png:
+        return
+    rows = [("q99", maps["obs_q99"], maps["pred_q99"], method)]
+    if "obs_q01" in maps:
+        rows.append(("q01", maps["obs_q01"], maps["pred_q01"], method))
+    rows.append(("fraction of days > regional q95", maps["obs_freq95"], maps["pred_freq95"], method))
+    _reference_rows_png(rows, lat, lon, f"Extremes — {variable} — {method}",
+                        plot_dir / f"extremes_{variable}.png")
+
+
+def plot_acc_daily(corr: np.ndarray, lat: np.ndarray, lon: np.ndarray, variable: str,
+                   method: str, plot_dir: Path, save_png: bool = True) -> None:
+    """Map of the daily anomaly correlation with the GCM; saves ``acc_daily_data_{variable}.npz``."""
+    np.savez_compressed(plot_dir / f"acc_daily_data_{variable}.npz", corr=corr, lat=lat, lon=lon)
+    if not save_png:
+        return
+    import matplotlib.pyplot as plt
+    ccrs, cfeature = _try_cartopy()
+    proj = ccrs.PlateCarree() if ccrs is not None else None
+    fig, ax = plt.subplots(figsize=(7, 5), subplot_kw={"projection": proj} if proj else {},
+                           layout="constrained")
+    im = ax.pcolormesh(lon, lat, corr, cmap="RdYlGn", vmin=0.0, vmax=1.0,
+                       **({"transform": ccrs.PlateCarree()} if ccrs is not None else {}))
+    _add_geo(ax, lon, lat, ccrs, cfeature)
+    plt.colorbar(im, ax=ax, shrink=0.8, label="ACC (daily anomalies)")
+    ax.set_title(f"Daily anomaly corr vs GCM — {variable} — {method}", fontsize=11)
+    out = plot_dir / f"acc_daily_{variable}.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  saved {out.name}")
+
+
+def plot_sal_maps(maps: dict, lat: np.ndarray, lon: np.ndarray, method: str,
+                  plot_dir: Path, save_png: bool = True) -> None:
+    """Per-cell rain-object maps (``metrics.sal_cell_maps``), ERA5 vs method; saves ``sal_data_pr.npz``."""
+    np.savez_compressed(plot_dir / "sal_data_pr.npz", **maps, lat=lat, lon=lon)
+    if not save_png:
+        return
+    rows = [("fraction of days in a rain object", maps["obs_freq"], maps["pred_freq"], method),
+            ("median object area (km²)", maps["obs_area"], maps["pred_area"], method),
+            ("median object flatness (mean / max)", maps["obs_flat"], maps["pred_flat"], method)]
+    _reference_rows_png(rows, lat, lon, f"Rain objects (SAL) — pr — {method}", plot_dir / "sal_pr.png")

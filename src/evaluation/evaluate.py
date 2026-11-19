@@ -39,13 +39,14 @@ from metrics import (
     mean_temporal_corr, mean_temporal_corr_annual,
     lag1_autocorr_mae, annual_anomaly_bias,
     intervar_corr_mae, spatial_spectrum_metric, fine_spectrum_metric,
-    delta_change_score,
+    delta_change_score, extreme_maps, acc_daily_map,
+    sal_daily, sal_distribution_scores, sal_cell_maps, grid_geometry,
 )
 from plots import (
     plot_bias_map, plot_cdf, plot_seasonal_cycle,
     plot_temporal_corr, plot_autocorr_comparison,
     plot_annual_anomalies, plot_radar, plot_intervar_corr, plot_delta_map,
-    plot_sample_days,
+    plot_sample_days, plot_extreme_maps, plot_acc_daily, plot_sal_maps,
 )
 
 from energy_views import (
@@ -589,6 +590,32 @@ def main(argv: list[str] | None = None) -> int:
             obs, pred_obs, gcm_metrics, pred_gcm, n_t, variable)
         all_metrics[variable]     = {"vs_obs": vs_obs, "vs_gcm": vs_gcm}
         all_plot_series[variable] = plot_series
+        var_plot_dir = plot_dir / variable
+        var_plot_dir.mkdir(exist_ok=True)
+        if n_t >= 200:
+            # Computed here rather than in compute_all_metrics: the map is plotted too,
+            # and the 2000-2099 anomalies are the costly part.
+            try:
+                acc_map = acc_daily_map(gcm_metrics, pred_gcm).values
+                vs_gcm["acc_daily"] = float(np.nanmean(acc_map))
+                plot_acc_daily(acc_map, obs.lat.values, obs.lon.values, variable, method_label,
+                               var_plot_dir)
+            except ValueError as exc:   # e.g. a 360-day calendar: no 365-day climatology
+                vs_gcm["acc_daily"] = float("nan")
+                print(f"  NOTE: acc_daily set to NaN: {exc}")
+            plot_extreme_maps(extreme_maps(obs, pred_obs, q_low=None if variable == "pr" else 0.01),
+                              obs.lat.values, obs.lon.values, variable, method_label, var_plot_dir)
+            if variable == "pr":
+                # SAL quantities of each map on its own, compared as 2000-2020 distributions.
+                # Own block: S and A are signed and two entries describe ERA5, unlike vs_obs errors.
+                q_obs, q_pred = sal_daily(obs), sal_daily(pred_obs)
+                d_km = grid_geometry(obs.lat.values, obs.lon.values)[3]
+                sal = sal_distribution_scores(q_obs, q_pred, d_km)
+                sal_maps, sal_scores = sal_cell_maps(q_obs, q_pred)
+                sal.update(sal_scores)
+                all_metrics[variable]["sal"] = sal
+                print("  SAL → " + "  ".join(f"{k}={v:.4f}" for k, v in sal.items()))
+                plot_sal_maps(sal_maps, obs.lat.values, obs.lon.values, method_label, var_plot_dir)
 
         # Print summary
         obs_summary = "  ".join(f"{k}={v:.4f}" for k, v in vs_obs.items())
@@ -598,8 +625,6 @@ def main(argv: list[str] | None = None) -> int:
 
         # Generate plots
         print("  Plotting ...")
-        var_plot_dir = plot_dir / variable
-        var_plot_dir.mkdir(exist_ok=True)
         daily = n_t >= 200
 
         # Obs-based scale limits so all methods share identical axes
@@ -734,11 +759,14 @@ def main(argv: list[str] | None = None) -> int:
 
     # Aggregate metrics across variables and generate radar
     var_metrics = {v: m for v, m in all_metrics.items() if not v.startswith("_")}
-    agg_obs = {k: float(np.nanmean([var_metrics[v]["vs_obs"][k] for v in var_metrics]))
-               for k in next(iter(var_metrics.values()))["vs_obs"]}
-    agg_gcm = {k: float(np.nanmean([var_metrics[v]["vs_gcm"][k] for v in var_metrics]))
-               for k in next(iter(var_metrics.values()))["vs_gcm"]}
-    plot_radar(agg_obs, agg_gcm, method_label, plot_dir)
+
+    def _aggregate(axis: str) -> dict[str, float]:
+        # Union of keys, in case a metric is missing for some variable.
+        keys = dict.fromkeys(k for m in var_metrics.values() for k in m[axis])
+        return {k: float(np.nanmean([m[axis][k] for m in var_metrics.values() if k in m[axis]]))
+                for k in keys}
+
+    plot_radar(_aggregate("vs_obs"), _aggregate("vs_gcm"), method_label, plot_dir)
 
     # Save metrics JSON
     metrics_file = out_dir / "metrics.json"
